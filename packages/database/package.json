@@ -20,7 +20,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "prisma": "^7.8.0"
+    "prisma": "^7.8.0",
+    "@workspace/typescript-config": "workspace:*"
   },
   "peerDependencies": {
     "typescript": "^5"

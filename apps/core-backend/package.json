@@ -5,18 +5,20 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "dev": "nodemon --exec \"node -r esbuild-register ./src/index.ts\" -e .ts",
+    "dev": "nodemon --exec \"tsx ./src/index.ts\" -e .ts",
     "lint": "tsc --noEmit && eslint \"src/**/*.ts*\" --max-warnings 0",
-    "start": "node -r esbuild-register ./src/index.ts",
+    "start": "tsx ./src/index.ts",
     "test": "jest --detectOpenHandles"
   },
   "jest": {
     "preset": "@workspace/jest-presets/node"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "body-parser": "^1.20.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "cuid": "^3.0.0",
     "dotenv": "^17.4.2",
     "express": "^4.18.3",
     "jsonwebtoken": "^9.0.3",
@@ -24,6 +26,7 @@
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",
+    "@types/bcrypt": "^6.0.0",
     "@types/body-parser": "^1.19.5",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
@@ -35,13 +38,16 @@
     "@workspace/database": "workspace:*",
     "@workspace/eslint-config": "workspace:^",
     "@workspace/jest-presets": "workspace:*",
+    "@workspace/nats-streams": "workspace:*",
+    "@workspace/types": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
+    "@workspace/validations": "workspace:*",
     "esbuild": "^0.20.1",
-    "esbuild-register": "^3.5.0",
     "eslint": "^8.57.0",
     "jest": "^30.2.0",
     "nodemon": "^3.1.0",
     "supertest": "^6.3.3",
+    "tsx": "^4.22.1",
     "typescript": "5.5.4"
   }
 }

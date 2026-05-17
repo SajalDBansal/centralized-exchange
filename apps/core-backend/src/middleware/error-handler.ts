@@ -10,7 +10,7 @@ export const errorMiddleware = (
     let statusCode = 500;
     let message = 'Internal Server Error';
     let type = 'INTERNAL_ERROR';
-    let errors = undefined;
+    let errors: Record<string, string[]> | undefined = undefined;
 
     if (err instanceof ApiError) {
         statusCode = err.statusCode;

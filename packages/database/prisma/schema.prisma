@@ -24,9 +24,10 @@ enum SpotOrderType {
 
 enum OrderStatus {
   OPEN
-  TRADED
   PARTIAL
+  FILLED
   CANCELLED
+  REJECTED
 }
 
 model User {
@@ -57,7 +58,7 @@ model Session {
 }
 
 model Market {
-  id             String   @id @default(cuid())
+  id             String   @id
   name           String   @unique
   baseAssetId    String
   quoteAssetId   String

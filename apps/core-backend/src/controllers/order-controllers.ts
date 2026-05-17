@@ -1,8 +1,152 @@
 import type { RequestHandler, Request, Response } from "express";
+import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
+import { NatsManager } from "@workspace/nats-streams";
+import { CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { CancelOrGetOrderClientSchema, CreateOrderClientSchema, GetOpenOrdersClientSchema } from "@workspace/validations";
+import { prisma } from "@workspace/database";
 
-export const createOrder: RequestHandler = async (request: Request, response: Response) => { }
-export const cancelOrder: RequestHandler = async (request: Request, response: Response) => { }
+const natsPromise = NatsManager.getInstance();
 
-export const getAllOrderByMarket: RequestHandler = async (request: Request, response: Response) => { }
-export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, response: Response) => { }
+export const createOrder: RequestHandler = async (request: Request, response: Response) => {
+    const body = request.body;
 
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = CreateOrderClientSchema.safeParse(body);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { market, price, quantity, side, type, postOnly, stpMode, timeInForce } = validateData.data;
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
+        NATS_INCOMING_SUBJECT.ORDER_CREATE,
+        {
+            price: BigInt(price),
+            quantity: BigInt(quantity),
+            userId, market, side, type,
+            postOnly, stpMode, timeInForce
+        }
+    );
+
+    if (!res.success) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        message: res.message,
+        success: res.success,
+        order: res,
+    });
+
+}
+export const cancelOrder: RequestHandler = async (request: Request, response: Response) => {
+    const params = request.params;
+
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = CancelOrGetOrderClientSchema.safeParse(params);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { orderId } = validateData.data;
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<CancelOrderReturnPayload, CancelOrderPayload>(
+        NATS_INCOMING_SUBJECT.ORDER_CANCEL,
+        { userId, orderId }
+    );
+
+    if (!res.success) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: res.success,
+        message: res.message,
+        orderId: res.orderId
+    });
+}
+
+export const getAllOrderById: RequestHandler = async (request: Request, response: Response) => {
+    const params = request.params;
+
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = CancelOrGetOrderClientSchema.safeParse(params);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { orderId } = validateData.data;
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<GetOrderByIdReturnPayload, GetOrderByIdPayload>(
+        NATS_INCOMING_SUBJECT.ORDER_GET,
+        { orderId, userId }
+    );
+
+    if (!res.success) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: res.success,
+        message: res.message,
+        order: res.order
+    });
+}
+
+export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, response: Response) => {
+    const params = request.params;
+
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = GetOpenOrdersClientSchema.safeParse(params);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { market } = validateData.data;
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<GetUserOpenOrdersReturnPayload, GetUserOpenOrdersPayload>(
+        NATS_INCOMING_SUBJECT.ORDER_OPEN_ORDERS,
+        { userId, market }
+    );
+
+    if (!res.success) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: res.success,
+        message: res.message,
+        orders: res.orders
+    });
+}
+
+// DB Route
+export const getAllOrderByMarket: RequestHandler = async (request: Request, response: Response) => {
+    const params = request.params;
+
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = GetOpenOrdersClientSchema.safeParse(params);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { market } = validateData.data;
+
+    const orders = await prisma.order.findMany({ where: { userId, marketId: market } })
+
+    return response.status(200).json({
+        success: true,
+        message: "Orders fetched successfully",
+        orders: orders
+    });
+}

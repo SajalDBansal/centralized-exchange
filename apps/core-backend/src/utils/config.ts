@@ -6,6 +6,7 @@ if (!process.env.JWT_REFRESH_TOKEN || !process.env.JWT_ACCESS_TOKEN) {
 }
 
 const config = {
+    PORT: process.env.PORT || 8080,
     BCRYPT_HASH: process.env.BCRYPT_HASH || 10,
     JWT_REFRESH_TOKEN: process.env.JWT_REFRESH_TOKEN,
     JWT_ACCESS_TOKEN: process.env.JWT_ACCESS_TOKEN,
