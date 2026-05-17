@@ -77,15 +77,19 @@ export type PayloadToBackendType =
     | GetUserBalancesReturnPayload
     | GetDepthReturnPayload;
 
-
 export interface BaseReturnPayload {
     success: boolean;
     message: string;
-    userId: string;
 }
 
-export interface CreateOrderReturnPayload extends BaseReturnPayload {
+export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
+    userId: string;
+    eventId: bigint;
+}
+
+export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
     orderId: string;
+    order: SpotOrderType | FutureOrderType;
     status: OrderStatus;
     averagePrice: bigint;
     executedQty: bigint;
@@ -94,25 +98,25 @@ export interface CreateOrderReturnPayload extends BaseReturnPayload {
     depths: { asks: DepthType[], bids: DepthType[] };
 }
 
-export interface CancelOrderReturnPayload extends BaseReturnPayload {
+export interface CancelOrderReturnPayload extends BaseReturnPayloadWithUser {
     orderId: string
 }
 
-export interface GetUserOpenOrdersReturnPayload extends BaseReturnPayload {
+export interface GetUserOpenOrdersReturnPayload extends BaseReturnPayloadWithUser {
     orders: SpotOrderType[] | FutureOrderType[];
 }
 
-export interface GetOrderByIdReturnPayload extends BaseReturnPayload {
+export interface GetOrderByIdReturnPayload extends BaseReturnPayloadWithUser {
     order: SpotOrderType | FutureOrderType;
 }
 
-export interface OnRampReturnPayload extends BaseReturnPayload {
+export interface OnRampReturnPayload extends BaseReturnPayloadWithUser {
     asset: BaseAssetType | QuoteAssetType;
     total: bigint;
     locked: bigint;
 }
 
-export interface GetUserBalancesReturnPayload extends BaseReturnPayload {
+export interface GetUserBalancesReturnPayload extends BaseReturnPayloadWithUser {
     balances: ReturnBalanceType
 }
 

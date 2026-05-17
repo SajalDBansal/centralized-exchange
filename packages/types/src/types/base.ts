@@ -1,7 +1,7 @@
 export type MarketSymbolType = `${BaseAssetType}_${QuoteAssetType}`;
 
 export type BaseAssetType = "BTC" | "ETH" | "SOL";
-export type QuoteAssetType = "INR" | "USD";
+export type QuoteAssetType = "INR" | "USD" | "PERP";
 
 export enum OrderType {
     LIMIT = "LIMIT",
@@ -49,9 +49,11 @@ export interface BaseOrderType {
     market: MarketSymbolType,
     side: OrderSide,
     type: OrderType,
+    leverage: number
     postOnly?: boolean;
     stpMode?: STPMode;
     timeInForce?: TimeInForce;
+    reduceOnly?: boolean;
 }
 
 export interface FillType {

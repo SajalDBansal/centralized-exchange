@@ -11,9 +11,11 @@ export const CreateOrderClientSchema = z.object({
     quantity: z.string("Quantity should be a valid number").regex(/^\d*\.?\d*$/, {
         message: "Only numbers and a single decimal point are allowed",
     }),
+    leverage: z.number("Quantity should be a valid number").optional(),
     side: z.enum([OrderSide.BUY, OrderSide.SELL]),
     type: z.enum([OrderType.LIMIT, OrderType.MARKET]),
     postOnly: z.boolean().optional(),
+    reduceOnly: z.boolean().optional(),
     stpMode: z.enum([STPMode.CANCEL_BOTH, STPMode.CANCEL_MAKER, STPMode.CANCEL_TAKER]).optional(),
     timeInForce: z.enum([TimeInForce.FOK, TimeInForce.GTC, TimeInForce.IOC]).optional(),
 });

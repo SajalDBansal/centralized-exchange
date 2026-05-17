@@ -8,8 +8,6 @@ export interface SpotOrderType extends BaseOrderType {
 
 export interface FutureOrderType extends BaseOrderType {
     orderId: string,
-    margin: bigint;
     filled: bigint;
     status: OrderStatus;
-    reduceOnly: boolean;
 }

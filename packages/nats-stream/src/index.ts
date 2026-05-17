@@ -1,7 +1,7 @@
 import cuid from "cuid";
-import { connect, Empty, JSONCodec } from "nats";
+import { connect, Empty } from "nats";
 import type { NatsConnection, Subscription, Msg } from "nats";
-import type { Handler, NatsIncomingSubjectTypes } from "@workspace/types";
+import type { NatsIncomingSubjectTypes } from "@workspace/types";
 import "dotenv/config";
 
 const NATS_URL = process.env.NATS_URL;
@@ -10,8 +10,33 @@ if (!NATS_URL) {
     throw new Error("NATS_URL is missing");
 }
 
-const jc = JSONCodec();
+const BIGINT_TAG = "__bigint";
 
+function encodePayload<T>(data: T): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify(data, (_key, value) =>
+        typeof value === "bigint" ? { [BIGINT_TAG]: value.toString() } : value
+    ));
+}
+
+function decodePayload<T>(data: Uint8Array): T {
+    return JSON.parse(new TextDecoder().decode(data), (_key, value) => {
+        const bigintRaw =
+            value !== null &&
+                typeof value === "object" &&
+                BIGINT_TAG in value
+                ? (value as Record<string, string>)[BIGINT_TAG]
+                : undefined;
+        if (typeof bigintRaw === "string") {
+            return BigInt(bigintRaw);
+        }
+        return value;
+    }) as T;
+}
+
+type Handler<TReq, TRes> = (
+    subject: NatsIncomingSubjectTypes,
+    data: TReq
+) => Promise<TRes>;
 
 export class NatsManager {
 
@@ -66,14 +91,13 @@ export class NatsManager {
 
         const response = await this.nc.request(
             subject,
-            payload !== undefined ? jc.encode(payload) : Empty,
+            payload !== undefined ? encodePayload(payload) : Empty,
             { timeout });
 
-        return jc.decode(response.data) as TRes;
+        return decodePayload<TRes>(response.data);
     }
 
     public async subscribe<TReq, TRes>(pattern: string, handler: Handler<TReq, TRes>, queueGroup = "engine-workers") {
-
         const sub: Subscription = this.nc.subscribe(pattern, { queue: queueGroup });
 
         console.log(`Subscribed to ${pattern}`);
@@ -86,20 +110,18 @@ export class NatsManager {
 
     private async handleMessage<TReq, TRes>(msg: Msg, handler: Handler<TReq, TRes>) {
         try {
-            const data = jc.decode(msg.data) as TReq;
+            const data = (msg.data.length === 0 ? undefined : decodePayload<TReq>(msg.data)) as TReq;
             const subject = msg.subject as NatsIncomingSubjectTypes;
             const result = await handler(subject, data);
 
             if (msg.reply) {
-                msg.respond(
-                    jc.encode(result)
-                );
+                msg.respond(encodePayload(result));
             }
 
         } catch (error: any) {
             console.error("NATS handler error", error);
             if (msg.reply) {
-                msg.respond(jc.encode({
+                msg.respond(encodePayload({
                     success: false,
                     error: error.message
                 }));
@@ -108,7 +130,7 @@ export class NatsManager {
     }
 
     public publish<T>(subject: NatsIncomingSubjectTypes, payload: T) {
-        this.nc.publish(subject, jc.encode(payload));
+        this.nc.publish(subject, encodePayload(payload));
     }
 
     public async disconnect() {
