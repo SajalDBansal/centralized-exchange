@@ -1,0 +1,149 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum SpotOrderType {
+  LIMIT
+  MARKET
+}
+
+enum OrderStatus {
+  OPEN
+  TRADED
+  PARTIAL
+  CANCELLED
+}
+
+model User {
+  id                String             @id @default(cuid())
+  username          String             @unique
+  email             String             @unique
+  passwordHash      String
+  isVerified        Boolean            @default(false)
+  isArchived        Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  sessions          Session[]
+  userAssetBalances UserAssetBalance[]
+  orders            Order[]
+}
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(references: [id], fields: [userId])
+  refreshTokenHash String
+  deviceIP         String
+  userAgent        String
+  revoke           Boolean   @default(false)
+  revokeAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model Market {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  baseAssetId    String
+  quoteAssetId   String
+  baseAsset      Asset    @relation("BaseAsset", fields: [baseAssetId], references: [id])
+  quoteAsset     Asset    @relation("QuoteAsset", fields: [quoteAssetId], references: [id])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  active         Boolean  @default(true)
+  orderHistories Order[]
+  Trades         Trade[]
+
+  @@unique([baseAssetId, quoteAssetId])
+  @@index([name])
+}
+
+model Asset {
+  id                String             @id @default(cuid())
+  name              String             @unique
+  symbol            String             @unique
+  logo              String
+  decimalPrecision  Int
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  baseMarkets       Market[]           @relation("BaseAsset")
+  quoteMarkets      Market[]           @relation("QuoteAsset")
+  userAssetBalances UserAssetBalance[]
+
+  @@index([symbol])
+}
+
+model UserAssetBalance {
+  id        String   @id @default(cuid())
+  userId    String
+  assetId   String
+  available Decimal  @default(0) @db.Decimal(36, 18)
+  locked    Decimal  @default(0) @db.Decimal(36, 18)
+  user      User     @relation(fields: [userId], references: [id])
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, assetId], name: "user_asset_balance")
+  @@index([userId])
+}
+
+model Order {
+  id                String        @id @default(cuid())
+  sequence          BigInt        @unique @default(autoincrement()) //for debugging
+  userId            String
+  marketId          String
+  type              SpotOrderType
+  side              TradeSide
+  status            OrderStatus
+  price             Decimal       @db.Decimal(36, 18)
+  quantity          Decimal       @db.Decimal(36, 18)
+  tradedQuantity    Decimal       @default(0) @db.Decimal(36, 18)
+  remainingQuantity Decimal       @db.Decimal(36, 18)
+  isCancelled       Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  cancelledAt       DateTime?
+  TradeedAt         DateTime?
+  user              User          @relation(fields: [userId], references: [id])
+  market            Market        @relation(fields: [marketId], references: [id])
+  makerTrades       Trade[]       @relation("MakerOrderTrades")
+  takerTrades       Trade[]       @relation("TakerOrderTrades")
+
+  @@index([marketId])
+  @@index([userId])
+}
+
+model Trade {
+  id           String   @id @default(cuid())
+  marketId     String
+  price        Decimal  @db.Decimal(36, 18)
+  quantity     Decimal  @db.Decimal(36, 18)
+  makerOrderId String
+  takerOrderId String
+  makerUserId  String
+  takerUserId  String
+  makerfee     Decimal  @db.Decimal(36, 18)
+  takerfee     Decimal  @db.Decimal(36, 18)
+  makerOrder   Order    @relation("MakerOrderTrades", fields: [makerOrderId], references: [id])
+  takerOrder   Order    @relation("TakerOrderTrades", fields: [takerOrderId], references: [id])
+  market       Market   @relation(fields: [marketId], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([marketId, createdAt])
+}
