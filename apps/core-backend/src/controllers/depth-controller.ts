@@ -1,20 +1,20 @@
 import type { RequestHandler, Request, Response } from "express";
 import { ApiError, ValidationError } from "../errors/error";
 import { NatsManager } from "@workspace/nats-streams";
-import { GetDepthPayload, GetDepthReturnPayload, MarketSymbolType, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { GetDepthPayload, GetDepthReturnPayload, MarketId, NATS_INCOMING_SUBJECT } from "@workspace/types";
 
 const natsPromise = NatsManager.getInstance();
 
 export const getDepthByMarket: RequestHandler = async (request: Request, response: Response) => {
-    const { market } = request.params as { market: MarketSymbolType };
+    const { marketId } = request.params as { marketId: MarketId };
 
-    if (!market) throw new ValidationError("MarketId is required");
+    if (!marketId) throw new ValidationError("MarketId is required");
 
     const nats = await natsPromise;
 
     const res = await nats.request<GetDepthReturnPayload, GetDepthPayload>(
         NATS_INCOMING_SUBJECT.DEPTH_GET,
-        { market }
+        { marketId }
     );
 
     if (!res.success) throw new ApiError(400, res.message);

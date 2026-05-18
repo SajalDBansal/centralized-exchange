@@ -18,18 +18,20 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { market, price, quantity, side, leverage, type, postOnly, reduceOnly, stpMode, timeInForce } = validateData.data;
+    const { marketId, entryPrice, quantity, side, leverage, type, postOnly, marketType, margin, reduceOnly, stpMode, timeInForce } = validateData.data;
 
     const nats = await natsPromise;
 
     const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
         NATS_INCOMING_SUBJECT.ORDER_CREATE,
         {
-            price: BigInt(price),
+            entryPrice: BigInt(entryPrice),
             quantity: BigInt(quantity),
+            margin: BigInt(margin),
             leverage,
-            userId, market, side, type,
-            postOnly, stpMode, timeInForce, reduceOnly
+            userId, marketId, side, type,
+            postOnly, stpMode, timeInForce, reduceOnly,
+            createdAt: 123, marketType
         }
     );
 
@@ -67,7 +69,7 @@ export const cancelOrder: RequestHandler = async (request: Request, response: Re
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        orderId: res.orderId
+        orderId: res.order.orderId
     });
 }
 
@@ -111,13 +113,13 @@ export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, 
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { market } = validateData.data;
+    const { marketId } = validateData.data;
 
     const nats = await natsPromise;
 
     const res = await nats.request<GetUserOpenOrdersReturnPayload, GetUserOpenOrdersPayload>(
         NATS_INCOMING_SUBJECT.ORDER_OPEN_ORDERS,
-        { userId, market }
+        { userId, marketId }
     );
 
     if (!res.success) throw new ApiError(400, res.message);
@@ -141,9 +143,9 @@ export const getAllOrderByMarket: RequestHandler = async (request: Request, resp
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { market } = validateData.data;
+    const { marketId } = validateData.data;
 
-    const orders = await prisma.order.findMany({ where: { userId, marketId: market } })
+    const orders = await prisma.order.findMany({ where: { userId, marketId } })
 
     return response.status(200).json({
         success: true,
