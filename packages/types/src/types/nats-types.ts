@@ -1,5 +1,6 @@
-import { BaseAssetType, BaseOrderType, DepthType, FillType, MarketSymbolType, OrderStatus, QuoteAssetType, ReturnBalanceType } from "./base";
-import { FutureOrderType, SpotOrderType } from "./spot";
+import { DepthType, FillType, Market, MarketId, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
+import { EVENT_REJECT_CODES } from "./oms";
+import { IncomingOrderType, InMarketOrderType } from "./spot";
 
 export type NatsIncomingSubjectTypes = (typeof NATS_INCOMING_SUBJECT)[keyof typeof NATS_INCOMING_SUBJECT];
 
@@ -20,35 +21,35 @@ export type Handler<TReq, TRes> = (
 ) => Promise<TRes>;
 
 // --------------------------------------------------------
-export type CreateOrderPayload = BaseOrderType;
+export type CreateOrderPayload = IncomingOrderType;
 
 export type CancelOrderPayload = {
-    userId: string;
-    orderId: string;
+    userId: UserId;
+    orderId: OrderId;
 };
 
 export type GetUserOpenOrdersPayload = {
-    userId: string;
-    market: MarketSymbolType;
+    userId: UserId;
+    marketId: MarketId;
 }
 
 export type GetOrderByIdPayload = {
-    userId: string;
-    orderId: string;
+    userId: UserId;
+    orderId: OrderId;
 }
 
 export type OnRampPayload = {
-    userId: string;
-    asset: BaseAssetType | QuoteAssetType;
+    userId: UserId;
+    asset: string;
     amount: bigint;
 }
 
 export type GetUserBalancesPayload = {
-    userId: string
+    userId: UserId
 }
 
 export type GetDepthPayload = {
-    market: MarketSymbolType;
+    marketId: MarketId;
 }
 
 export type HealthCheckPayload = {
@@ -80,16 +81,17 @@ export type PayloadToBackendType =
 export interface BaseReturnPayload {
     success: boolean;
     message: string;
+    eventId: bigint;
+    code?: EVENT_REJECT_CODES;
 }
 
 export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
     userId: string;
-    eventId: bigint;
 }
 
 export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
     orderId: string;
-    order: SpotOrderType | FutureOrderType;
+    order: InMarketOrderType;
     status: OrderStatus;
     averagePrice: bigint;
     executedQty: bigint;
@@ -99,19 +101,19 @@ export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
 }
 
 export interface CancelOrderReturnPayload extends BaseReturnPayloadWithUser {
-    orderId: string
+    order: InMarketOrderType;
 }
 
 export interface GetUserOpenOrdersReturnPayload extends BaseReturnPayloadWithUser {
-    orders: SpotOrderType[] | FutureOrderType[];
+    orders: InMarketOrderType[];
 }
 
 export interface GetOrderByIdReturnPayload extends BaseReturnPayloadWithUser {
-    order: SpotOrderType | FutureOrderType;
+    order: InMarketOrderType;
 }
 
 export interface OnRampReturnPayload extends BaseReturnPayloadWithUser {
-    asset: BaseAssetType | QuoteAssetType;
+    asset: string;
     total: bigint;
     locked: bigint;
 }
@@ -121,6 +123,6 @@ export interface GetUserBalancesReturnPayload extends BaseReturnPayloadWithUser 
 }
 
 export interface GetDepthReturnPayload extends BaseReturnPayload {
-    market: MarketSymbolType;
+    market: Market;
     depths: { asks: DepthType[], bids: DepthType[] }
 }

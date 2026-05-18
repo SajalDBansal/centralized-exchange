@@ -11,20 +11,22 @@
     "test": "jest --detectOpenHandles"
   },
   "dependencies": {
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "functional-red-black-tree": "^1.0.1"
   },
   "devDependencies": {
+    "@types/functional-red-black-tree": "^1.0.6",
+    "@types/node": "^20.11.24",
     "@workspace/database": "workspace:*",
     "@workspace/eslint-config": "workspace:^",
-    "@workspace/typescript-config": "workspace:*",
     "@workspace/nats-streams": "workspace:*",
     "@workspace/types": "workspace:*",
-    "@types/node": "^20.11.24",
+    "@workspace/typescript-config": "workspace:*",
     "esbuild": "^0.20.1",
     "esbuild-register": "^3.5.0",
     "eslint": "^8.57.0",
     "nodemon": "^3.1.0",
-    "typescript": "5.5.4",
-    "tsx": "^4.22.1"
+    "tsx": "^4.22.1",
+    "typescript": "5.5.4"
   }
 }

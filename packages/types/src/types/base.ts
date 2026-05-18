@@ -1,7 +1,11 @@
-export type MarketSymbolType = `${BaseAssetType}_${QuoteAssetType}`;
+export type OrderId = string;
+export type UserId = string;
+export type MarketId = string;
 
-export type BaseAssetType = "BTC" | "ETH" | "SOL";
-export type QuoteAssetType = "INR" | "USD" | "PERP";
+export enum MarketType {
+    SPOT = "SPOT",
+    PERP = "PERP"
+}
 
 export enum OrderType {
     LIMIT = "LIMIT",
@@ -9,8 +13,8 @@ export enum OrderType {
 }
 
 export enum OrderSide {
-    BUY = "BUY",
-    SELL = "SELL"
+    LONG = "LONG",
+    SHORT = "SHORT"
 }
 
 export enum OrderStatus {
@@ -26,7 +30,7 @@ export enum FillStatus {
     STP = "STP"
 }
 
-export type UserBalanceType = Map<BaseAssetType | QuoteAssetType, { total: number, locked: number }>
+// export type UserBalanceType = Map<BaseAssetType | QuoteAssetType, { total: number, locked: number }>
 
 export type WithoutSequenceOrderType<T> = T extends any ? Omit<T, "sequence"> : never;
 
@@ -37,23 +41,34 @@ export enum STPMode {
 }
 
 export enum TimeInForce {
-    GTC = "GTC",
-    IOC = "IOC",
-    FOK = "FOK",
+    GTC = "Good_Till_Cancel",
+    IOC = "Immediate_OR_Return",
+    FOK = "Fill_OR_KILL",
+}
+
+export interface Market {
+    id: MarketId;
+    name: string;
+    baseAsset: string;
+    quoteAsset: string;
+    maxLeverage: number;
+    minQty: bigint;
+    tickSize: bigint;
+    lotSize: bigint;
+    minNotional: bigint;
 }
 
 export interface BaseOrderType {
-    price: bigint,
-    quantity: bigint,
-    userId: string,
-    market: MarketSymbolType,
-    side: OrderSide,
-    type: OrderType,
-    leverage: number
-    postOnly?: boolean;
-    stpMode?: STPMode;
-    timeInForce?: TimeInForce;
-    reduceOnly?: boolean;
+    entryPrice?: bigint;
+    quantity: bigint;
+    userId: string;
+    marketId: MarketId;
+    side: OrderSide;
+    type: OrderType;
+    postOnly: boolean;
+    stpMode: STPMode;
+    timeInForce: TimeInForce;
+    createdAt: number;
 }
 
 export interface FillType {
@@ -65,11 +80,17 @@ export interface FillType {
     makerOrderId: string,
     makerUserId: string,
     side: OrderSide,
-    market: MarketSymbolType,
+    market: Market,
     status: FillStatus;
 }
 
 export interface DepthType { price: bigint, quantity: bigint }
 
-export type ReturnBalanceType = Partial<Record<BaseAssetType | QuoteAssetType, bigint>>;
+export interface BalanceEntry {
+    total: bigint;
+    locked: bigint;
+}
 
+export type ReturnBalanceType = Partial<
+    Record<string, BalanceEntry>
+>;

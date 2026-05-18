@@ -7,9 +7,14 @@
   "private": true,
   "devDependencies": {
     "@types/bun": "latest",
-    "@workspace/typescript-config": "workspace:*"
+    "@types/functional-red-black-tree": "^1.0.6",
+    "@workspace/typescript-config": "workspace:*",
+    "import": "^0.0.6"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "functional-red-black-tree": "^1.0.1"
   }
 }
