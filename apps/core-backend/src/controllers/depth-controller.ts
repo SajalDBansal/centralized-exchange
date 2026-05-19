@@ -17,12 +17,11 @@ export const getDepthByMarket: RequestHandler = async (request: Request, respons
         { marketId }
     );
 
-    if (!res.success) throw new ApiError(400, res.message);
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        market: res.market,
-        depths: res.depths
+        data: res.data
     });
 }

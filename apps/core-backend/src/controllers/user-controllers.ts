@@ -38,12 +38,12 @@ export const getBalance: RequestHandler = async (request: Request, response: Res
         NATS_INCOMING_SUBJECT.BALANCE_GET, { userId }
     );
 
-    if (!res.success) throw new ApiError(400, res.message);
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        balances: res.balances,
+        data: res.data
     });
 }
 
@@ -62,7 +62,7 @@ export const addBalance: RequestHandler = async (request: Request, response: Res
     const { asset, amount } = validateData.data;
 
     const res = await nats.request<OnRampReturnPayload, OnRampPayload>(
-        NATS_INCOMING_SUBJECT.ON_RAMP, { userId, asset, amount: BigInt(amount) }
+        NATS_INCOMING_SUBJECT.ON_RAMP, { userId, asset, amount }
     );
 
     if (!res.success) throw new ApiError(400, res.message);

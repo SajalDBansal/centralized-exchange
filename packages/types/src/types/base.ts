@@ -7,14 +7,19 @@ export enum MarketType {
     PERP = "PERP"
 }
 
+export enum OrderPosition {
+    LONG = "LONG",
+    SHORT = "SHORT"
+}
+
 export enum OrderType {
     LIMIT = "LIMIT",
     MARKET = "MARKET"
 }
 
 export enum OrderSide {
-    LONG = "LONG",
-    SHORT = "SHORT"
+    BUY = "BUY",
+    SELL = "SELL"
 }
 
 export enum OrderStatus {
@@ -52,28 +57,29 @@ export interface Market {
     baseAsset: string;
     quoteAsset: string;
     maxLeverage: number;
-    minQty: bigint;
-    tickSize: bigint;
-    lotSize: bigint;
-    minNotional: bigint;
+    minQty: number; // convert to bigint for calc
+    tickSize: number; // convert to bigint for calc
+    lotSize: number; // convert to bigint for calc
+    minNotional: number; // convert to bigint for calc
 }
 
 export interface BaseOrderType {
-    entryPrice?: bigint;
-    quantity: bigint;
+    entryPrice?: string; // convert to bigint for calc
+    quantity: string; // convert to bigint for calc
     userId: string;
     marketId: MarketId;
     side: OrderSide;
     type: OrderType;
     postOnly: boolean;
     stpMode: STPMode;
+    position: OrderPosition;
     timeInForce: TimeInForce;
     createdAt: number;
 }
 
 export interface FillType {
-    price: bigint,
-    qty: bigint,
+    price: string; // convert to bigint for calc
+    qty: string; // convert to bigint for calc
     tradeId: string,
     takerOrderId: string,
     takerUserId: string;
@@ -84,11 +90,11 @@ export interface FillType {
     status: FillStatus;
 }
 
-export interface DepthType { price: bigint, quantity: bigint }
+export interface DepthType { price: string, quantity: string }// convert to bigint for calc
 
 export interface BalanceEntry {
-    total: bigint;
-    locked: bigint;
+    total: string; // convert to bigint for calc
+    locked: string; // convert to bigint for calc
 }
 
 export type ReturnBalanceType = Partial<

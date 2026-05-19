@@ -18,20 +18,17 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { marketId, entryPrice, quantity, side, leverage, type, postOnly, marketType, margin, reduceOnly, stpMode, timeInForce } = validateData.data;
+    const { marketId, entryPrice, quantity, side, position, leverage, type, postOnly, marketType, margin, reduceOnly, stpMode, timeInForce } = validateData.data;
 
     const nats = await natsPromise;
 
     const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
         NATS_INCOMING_SUBJECT.ORDER_CREATE,
         {
-            entryPrice: BigInt(entryPrice),
-            quantity: BigInt(quantity),
-            margin: BigInt(margin),
-            leverage,
-            userId, marketId, side, type,
-            postOnly, stpMode, timeInForce, reduceOnly,
-            createdAt: 123, marketType
+            entryPrice, quantity, userId, marketId,
+            side, type, postOnly, stpMode, position,
+            timeInForce, createdAt: Date.now(),
+            reduceOnly, margin, leverage, marketType
         }
     );
 
@@ -64,12 +61,12 @@ export const cancelOrder: RequestHandler = async (request: Request, response: Re
         { userId, orderId }
     );
 
-    if (!res.success) throw new ApiError(400, res.message);
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        orderId: res.order.orderId
+        data: res.data
     });
 }
 
@@ -93,12 +90,12 @@ export const getAllOrderById: RequestHandler = async (request: Request, response
         { orderId, userId }
     );
 
-    if (!res.success) throw new ApiError(400, res.message);
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        order: res.order
+        data: res.data
     });
 }
 
@@ -122,12 +119,12 @@ export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, 
         { userId, marketId }
     );
 
-    if (!res.success) throw new ApiError(400, res.message);
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
-        orders: res.orders
+        data: res.data
     });
 }
 

@@ -1,12 +1,35 @@
-import { BaseReturnPayload, CancelOrderPayload, CreateOrderPayload, EVENT_REJECT_CODES, GetDepthPayload, GetOrderByIdPayload, GetUserOpenOrdersPayload, Market, MarketsType, MarketType, OnRampPayload, OrderId, OrderList, OrderSide, OrderType, STPMode, TimeInForce } from "@workspace/types";
-import { BALANCES, baseAsset, MARKETS, ORDERBOOKS, ORDERMAP, POSITIONS, quoteAsset } from "./core-engine";
-import { OrderBook } from "./matching-engine";
+import {
+    CancelOrderPayload,
+    CreateOrderPayload,
+    EVENT_REJECT_CODES,
+    GetDepthPayload,
+    GetOrderByIdPayload,
+    GetUserOpenOrdersPayload,
+    Market,
+    MarketType,
+    OnRampPayload,
+    OrderId,
+    OrderList,
+    OrderPosition,
+    OrderSide,
+    OrderType,
+    STPMode,
+    TimeInForce,
+} from "@workspace/types";
+
+import {
+    EngineState,
+    baseAsset,
+    quoteAsset,
+} from "./core-engine";
+
 import { RejectError } from "../utils/error";
-import { assert } from "console";
 
 export class OMSEngine {
 
-    OrderbookEngine: OrderBook = new OrderBook()
+    constructor(private readonly state: EngineState) { }
+
+    // PUBLIC CHECKS
 
     createOrderChecks(order: CreateOrderPayload) {
 
@@ -22,16 +45,17 @@ export class OMSEngine {
 
         this.validateOrderbookRules(order);
 
-        this.validateRiskRules(order);
-
+        this.validateRiskRules(order, market);
     }
 
     UserBalanceCheck(payload: OnRampPayload) {
+
         const inBase = baseAsset.includes(payload.asset);
+
         const inQuote = quoteAsset.includes(payload.asset);
 
-        if (inBase || inQuote) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "No asset found in the market");
+        if (!inBase && !inQuote) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Invalid asset");
         }
     }
 
@@ -51,219 +75,214 @@ export class OMSEngine {
         this.validateOrderId(order.orderId);
     }
 
-    private validateMarket(marketId: string) {
+    // MARKET VALIDATION
 
-        const market = MARKETS.get(marketId);
+    private validateMarket(marketId: string): Market {
+
+        const market = this.state.markets.get(marketId);
 
         if (!market) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_MARKET,
-                "Invalid market"
-            );
+            return this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Invalid market");
         }
 
         return market;
     }
 
+    //    BASIC ORDER VALIDATION
+
     private validateBasicOrder(order: CreateOrderPayload) {
 
-        if (
-            order.side !== OrderSide.LONG &&
-            order.side !== OrderSide.SHORT
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_SIDE,
-                "Invalid side"
-            );
+        if (order.side !== OrderSide.BUY && order.side !== OrderSide.SELL) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_SIDE, "Invalid order side");
         }
 
-        if (
-            order.type !== OrderType.LIMIT &&
-            order.type !== OrderType.MARKET
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_ORDER_TYPE,
-                "Invalid order type"
-            );
+        if (order.type !== OrderType.LIMIT && order.type !== OrderType.MARKET) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_ORDER_TYPE, "Invalid order type");
         }
 
-        if (order.quantity <= 0n) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_QUANTITY,
-                "Quantity must be positive"
-            );
+        if (BigInt(order.quantity) <= 0n) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Quantity must be positive");
         }
 
-        if (
-            order.type === OrderType.LIMIT &&
-            typeof order.entryPrice === "undefined"
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_PRICE,
-                "Limit order requires price"
-            );
+        //    MARKET ORDERS
+
+        if (order.type === OrderType.MARKET && typeof order.entryPrice !== "undefined") {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Market orders cannot have price");
         }
 
-        if (
-            typeof order.entryPrice !== "undefined" &&
-            order.entryPrice <= 0n
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_PRICE,
-                "Price must be positive"
-            );
+        //    LIMIT ORDERS
+
+        if (order.type === OrderType.LIMIT && typeof order.entryPrice === "undefined") {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Limit order requires price");
         }
+
+        if (typeof order.entryPrice !== "undefined" && BigInt(order.entryPrice) <= 0n) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Price must be positive");
+        }
+
+        //    PERP VALIDATION
 
         if (order.marketType === MarketType.PERP) {
 
+            if (order.position !== OrderPosition.LONG && order.position !== OrderPosition.SHORT) {
+
+                return this.reject(EVENT_REJECT_CODES.INVALID_POSITION, "Invalid position direction");
+            }
+
             if (order.leverage <= 0) {
-                return this.reject(
-                    EVENT_REJECT_CODES.INVALID_LEVERAGE,
-                    "Invalid leverage"
-                );
+
+                return this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Invalid leverage");
             }
         }
+
+        //    SPOT VALIDATION
+
+        if (order.marketType !== MarketType.PERP && typeof order.position !== "undefined") {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_POSITION, "Spot order cannot have position");
+        }
     }
+
+    //    TIME IN FORCE VALIDATION
 
     private validateTIF(order: CreateOrderPayload) {
 
-        if (
-            order.type === OrderType.MARKET &&
-            order.timeInForce === TimeInForce.GTC
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.MARKET_ORDER_GTC,
-                "Market orders cannot use GTC"
-            );
+        if (order.type === OrderType.MARKET && order.timeInForce === TimeInForce.GTC) {
+
+            return this.reject(EVENT_REJECT_CODES.MARKET_ORDER_GTC, "Market orders cannot use GTC");
         }
     }
 
+    //    MARKET CONSTRAINTS
+
     private validateMarketConstraints(order: CreateOrderPayload, market: Market) {
+
         if (order.marketType === MarketType.PERP) {
+
             if (order.leverage > market.maxLeverage) {
-                return this.reject(
-                    EVENT_REJECT_CODES.LEVERAGE_EXCEEDED,
-                    "Leverage exceeds limit"
-                );
+
+                return this.reject(EVENT_REJECT_CODES.LEVERAGE_EXCEEDED, "Leverage exceeds limit");
             }
         }
 
-        if (order.quantity < market.minQty) {
-            return this.reject(
-                EVENT_REJECT_CODES.BELOW_MIN_QTY,
-                "Quantity below minimum"
-            );
+        if (BigInt(order.quantity) < market.minQty) {
+
+            return this.reject(EVENT_REJECT_CODES.BELOW_MIN_QTY, "Quantity below minimum");
         }
 
-        if (order.quantity % market.lotSize !== 0n) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_LOT_SIZE,
-                "Invalid lot size"
-            );
+        if (BigInt(order.quantity) % BigInt(market.lotSize) !== 0n) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Invalid lot size");
         }
 
-        if (
-            typeof order.entryPrice !== "undefined" &&
-            order.entryPrice % market.tickSize !== 0n
-        ) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_TICK_SIZE,
-                "Invalid tick size"
-            );
+        if (typeof order.entryPrice !== "undefined" && BigInt(order.entryPrice) % BigInt(market.tickSize) !== 0n) {
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Invalid tick size");
         }
 
         if (typeof order.entryPrice !== "undefined") {
 
-            const notional = order.entryPrice * order.quantity;
+            const notional = BigInt(order.entryPrice) * BigInt(order.quantity);
 
             if (notional < market.minNotional) {
-                return this.reject(
-                    EVENT_REJECT_CODES.BELOW_MIN_NOTIONAL,
-                    "Below minimum notional"
-                );
+
+                return this.reject(EVENT_REJECT_CODES.BELOW_MIN_NOTIONAL, "Below minimum notional");
             }
         }
     }
 
+    //    POSITION RULES
+
     private validatePositionRules(order: CreateOrderPayload) {
 
-        const marketPositions = POSITIONS.get(order.marketId);
+        if (order.marketType !== MarketType.PERP) {
+            return;
+        }
 
-        if (!marketPositions) return;
+        const marketPositions = this.state.positions.get(order.marketId);
+
+        if (!marketPositions) {
+            return;
+        }
 
         const position = marketPositions.get(order.userId);
 
         if (!position) {
 
-            if (order.marketType === MarketType.PERP && order.reduceOnly) {
-                return this.reject(
-                    EVENT_REJECT_CODES.REDUCE_ONLY_INVALID,
-                    "No position to reduce"
-                );
+            if (order.reduceOnly) {
+
+                return this.reject(EVENT_REJECT_CODES.REDUCE_ONLY_INVALID, "No position exists to reduce");
             }
 
             return;
         }
 
-        if (order.marketType === MarketType.PERP && order.reduceOnly) {
 
-            if (position.side === OrderSide.LONG && order.side === OrderSide.LONG) {
-                return this.reject(
-                    EVENT_REJECT_CODES.REDUCE_ONLY_INVALID,
-                    "Reduce only cannot increase long"
-                );
-            }
+        //    REDUCE ONLY
 
-            if (position.side === OrderSide.SHORT && order.side === OrderSide.SHORT) {
-                return this.reject(
-                    EVENT_REJECT_CODES.REDUCE_ONLY_INVALID,
-                    "Reduce only cannot increase short"
-                );
-            }
+
+        if (order.reduceOnly && position.position === order.position) {
+
+            return this.reject(EVENT_REJECT_CODES.REDUCE_ONLY_INVALID, "Reduce only order increases exposure");
         }
     }
 
+    //    ORDERBOOK RULES
+
     private validateOrderbookRules(order: CreateOrderPayload) {
 
-        const orderbook = ORDERBOOKS.get(order.marketId);
+        const orderbook = this.state.orderbooks.get(order.marketId);
 
         if (!orderbook) {
-            return this.reject(
-                EVENT_REJECT_CODES.INVALID_MARKET,
-                "Orderbook missing"
-            );
+
+            return this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook missing");
         }
 
         const userOrders = orderbook.userOrders.get(order.userId);
 
         if (userOrders && userOrders.size >= 100) {
-            return this.reject(
-                EVENT_REJECT_CODES.MAX_OPEN_ORDERS,
-                "Too many open orders"
-            );
+
+            return this.reject(EVENT_REJECT_CODES.MAX_OPEN_ORDERS, "Too many open orders");
         }
+
+
+        //    POST ONLY VALIDATION
+
 
         if (order.postOnly && order.type === OrderType.LIMIT) {
 
-            const bestAsk = this.OrderbookEngine.getBestAsk();
-            const bestBid = this.OrderbookEngine.getBestBid();
+            const bestAsk = this.getBestAsk(orderbook);
 
-            if (order.side === OrderSide.LONG && bestAsk && order.entryPrice! >= bestAsk) {
-                return this.reject(
-                    EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE,
-                    "Post only order would execute immediately"
-                );
+            const bestBid = this.getBestBid(orderbook);
+
+            if (order.side === OrderSide.BUY && bestAsk !== null && BigInt(order.entryPrice!) >= bestAsk) {
+
+                return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
 
-            if (order.side === OrderSide.SHORT && bestBid && order.entryPrice! <= bestBid) {
-                return this.reject(
-                    EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE,
-                    "Post only order would execute immediately"
-                );
+            if (order.side === OrderSide.SELL && bestBid !== null && BigInt(order.entryPrice!) <= bestBid) {
+
+                return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
         }
 
-        if (!userOrders) return;
+
+        //    STP RULES
+
+
+        if (order.type === OrderType.MARKET) {
+            return;
+        }
+
+        if (!userOrders) {
+            return;
+        }
 
         const stpMode = order.stpMode || STPMode.CANCEL_TAKER;
 
@@ -275,54 +294,54 @@ export class OMSEngine {
 
             const resting = node.order;
 
-            const crosses =
-                order.side === OrderSide.LONG
-                    ? order.entryPrice! >= resting.entryPrice!
-                    : order.entryPrice! <= resting.entryPrice!;
+            const crosses = order.side === OrderSide.BUY
+                ? BigInt(order.entryPrice!) >= resting.entryPrice!
+                : BigInt(order.entryPrice!) <= resting.entryPrice!;
 
             if (crosses && resting.side !== order.side) {
 
                 switch (stpMode) {
 
                     case STPMode.CANCEL_TAKER:
-                        return this.reject(
-                            EVENT_REJECT_CODES.STP_TRIGGERED,
-                            "STP cancel taker triggered"
-                        );
+
+                        return this.reject(EVENT_REJECT_CODES.STP_TRIGGERED, "STP cancel taker triggered");
 
                     case STPMode.CANCEL_MAKER:
+
                         /*
-                           matching engine should cancel resting order
+                          Matching engine should
+                          cancel resting maker
                         */
-                        // this.OrderbookEngine.cancelOrder({
-                        // userId: resting.userId,
-                        // orderId:resting.orderId})
 
                         break;
 
                     case STPMode.CANCEL_BOTH:
-                        return this.reject(
-                            EVENT_REJECT_CODES.STP_TRIGGERED,
-                            "STP cancel both triggered"
-                        );
+
+                        return this.reject(EVENT_REJECT_CODES.STP_TRIGGERED, "STP cancel both triggered");
                 }
             }
-        });
+        }
+        );
     }
 
-    private validateRiskRules(order: CreateOrderPayload) {
+    //    RISK RULES
+
+    private validateRiskRules(order: CreateOrderPayload, market: Market) {
+
+        //    MARKET LIQUIDITY
+
 
         if (order.type === OrderType.MARKET) {
 
             const liquidity = this.getAvailableLiquidity(order);
 
-            if (liquidity < order.quantity) {
-                return this.reject(
-                    EVENT_REJECT_CODES.NO_LIQUIDITY,
-                    "Insufficient market liquidity"
-                );
+            if (liquidity < BigInt(order.quantity)) {
+
+                return this.reject(EVENT_REJECT_CODES.NO_LIQUIDITY, "Insufficient market liquidity");
             }
         }
+
+        //    SPOT
 
         if (order.marketType !== MarketType.PERP) {
             return;
@@ -332,82 +351,114 @@ export class OMSEngine {
             return;
         }
 
-        const notional = order.entryPrice * order.quantity;
+
+        //    PERP MARGIN
+
+
+        const notional = BigInt(order.entryPrice) * BigInt(order.quantity);
 
         const requiredMargin = notional / BigInt(order.leverage);
 
-        const asset = order.marketId.split("_")[0]!;
+        const collateralAsset = market.quoteAsset;
 
-        const userBalances = BALANCES.get(order.userId);
+        const userBalances = this.state.balances.get(order.userId);
 
         if (!userBalances) {
-            return this.reject(
-                EVENT_REJECT_CODES.INSUFFICIENT_MARGIN,
-                "User Balance not found"
-            );
+
+            return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_MARGIN, "User balance not found");
         }
 
-        const assetBalance = userBalances.get(asset);
+        const collateralBalance = userBalances.get(collateralAsset);
 
-        if (!assetBalance) {
-            return this.reject(
-                EVENT_REJECT_CODES.INSUFFICIENT_MARGIN,
-                "User Asset Balance not found"
-            );
+        if (!collateralBalance) {
+
+            return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_MARGIN, "Collateral balance missing");
         }
 
-        if (this.availableBalance(assetBalance.total, assetBalance.locked) < requiredMargin) {
-            return this.reject(
-                EVENT_REJECT_CODES.INSUFFICIENT_MARGIN,
-                "Insufficient margin"
-            );
+        if (this.availableBalance(collateralBalance.total, collateralBalance.locked) < requiredMargin) {
+
+            return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_MARGIN, "Insufficient margin");
         }
     }
 
+    //    LIQUIDITY
+
     private getAvailableLiquidity(order: CreateOrderPayload): bigint {
 
-        const orderbook = ORDERBOOKS.get(order.marketId);
+        const orderbook = this.state.orderbooks.get(order.marketId);
 
-        if (!orderbook) return 0n;
+        if (!orderbook) { return 0n; }
 
         let liquidity = 0n;
 
-        const list = order.side === OrderSide.LONG ? orderbook.asks : orderbook.bids;
+        const levels = order.side === OrderSide.BUY
+            ? orderbook.asks
+            : orderbook.bids;
 
-        list.forEach((level: OrderList) => { liquidity += level.totalQty; });
+        levels.forEach((level: OrderList) => {
+
+            if (level.totalQty <= 0n) {
+                return;
+            }
+
+            liquidity += level.totalQty;
+        }
+        );
 
         return liquidity;
     }
 
+    //    ORDER ID VALIDATION
+
     private validateOrderId(orderId: OrderId) {
-        const marketId = ORDERMAP.get(orderId);
+
+        const marketId = this.state.orderMap.get(orderId);
 
         if (!marketId) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "No market name found");
+
+            this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order not found");
         }
 
-        const market = this.validateMarket(marketId);
-
-        const orderbook = ORDERBOOKS.get(market.id);
+        const orderbook = this.state.orderbooks.get(marketId);
 
         if (!orderbook) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "No orderbook found for the market");
+
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
         }
 
         const orderNode = orderbook.orderMap.get(orderId);
 
         if (!orderNode) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Ordernode not found");
+
+            this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order node missing");
         }
     }
 
-    private reject(code: EVENT_REJECT_CODES, message: string): never {
-        throw new RejectError(code, message);
+    //    BEST BID / ASK
+
+    private getBestAsk(orderbook: any): bigint | null {
+
+        const node = orderbook.askTree.begin;
+
+        return node.valid ? node.key : null;
     }
 
+    private getBestBid(orderbook: any): bigint | null {
+
+        const node = orderbook.bidTree.end;
+
+        return node.valid ? node.key : null;
+    }
+
+    //    HELPERS
+
     private availableBalance(total: bigint, locked: bigint): bigint {
+
         return total - locked;
     }
 
-}
+    private reject(code: EVENT_REJECT_CODES, message: string): never {
 
+        throw new RejectError(code, message);
+    }
+}

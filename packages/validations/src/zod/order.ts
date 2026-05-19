@@ -1,5 +1,5 @@
 import z from "zod";
-import { MarketType, OrderSide, OrderType, STPMode, TimeInForce } from "@workspace/types"
+import { MarketType, OrderPosition, OrderSide, OrderType, STPMode, TimeInForce } from "@workspace/types"
 
 export const CreateOrderClientSchema = z.object({
     marketId: z.string("Provide a valid market Name"),
@@ -13,9 +13,10 @@ export const CreateOrderClientSchema = z.object({
         message: "Only numbers and a single decimal point are allowed",
     }),
     leverage: z.number("Quantity should be a valid number"),
-    side: z.enum([OrderSide.LONG, OrderSide.SHORT]),
+    side: z.enum([OrderSide.BUY, OrderSide.SELL]),
     marketType: z.enum([MarketType.PERP, MarketType.SPOT]),
     type: z.enum([OrderType.LIMIT, OrderType.MARKET]),
+    position: z.enum([OrderPosition.LONG, OrderPosition.SHORT]),
     postOnly: z.boolean(),
     reduceOnly: z.boolean(),
     stpMode: z.enum([STPMode.CANCEL_BOTH, STPMode.CANCEL_MAKER, STPMode.CANCEL_TAKER]),

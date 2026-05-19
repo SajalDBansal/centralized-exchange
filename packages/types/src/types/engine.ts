@@ -1,12 +1,12 @@
 import { OrderList, OrderNode } from "../orderList";
-import { Market, MarketId, OrderId, OrderSide, UserId } from "./base";
+import { Market, MarketId, OrderId, OrderPosition, OrderSide, UserId } from "./base";
 import { Tree } from "functional-red-black-tree";
 
 
-export interface PerpAssetOrderbookType {
+export interface AssetOrderbookType {
     market: MarketId;
-    tickSize: bigint;
-    lotSize: bigint;
+    tickSize: number;
+    lotSize: number;
     bids: Map<bigint, OrderList>;
     asks: Map<bigint, OrderList>;
     bidTree: Tree<bigint, boolean>;
@@ -17,14 +17,15 @@ export interface PerpAssetOrderbookType {
     indexPrice: bigint;
 }
 
-export type PerpOrderBookType = Map<MarketId, PerpAssetOrderbookType>;
+export type OrderBookType = Map<MarketId, AssetOrderbookType>;
 
 export interface UserPositionType {
-    userId: string;
-    positionId: string;
-    orderId: string;
+    userId: bigint;
+    positionId: bigint;
+    orderId: bigint;
     market: MarketId;
     side: OrderSide;
+    position: OrderPosition;
     leverage: number
     margin: bigint;
     averagePrice: bigint;

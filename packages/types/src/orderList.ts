@@ -1,16 +1,16 @@
-import { PerpInMarketOrder } from "./types/spot";
+import { InMarketOrderType } from "./types/spot";
 
 
-export function remaining(order: PerpInMarketOrder): bigint {
+export function remaining(order: InMarketOrderType): bigint {
     return order.quantity - order.filled;
 }
 
 export class OrderNode {
-    order: PerpInMarketOrder;
+    order: InMarketOrderType;
     next: OrderNode | null = null;
     prev: OrderNode | null = null;
 
-    constructor(order: PerpInMarketOrder) {
+    constructor(order: InMarketOrderType) {
         this.order = order;
     }
 }
@@ -21,7 +21,7 @@ export class OrderList {
     size = 0;
     totalQty: bigint = 0n;
 
-    append(order: PerpInMarketOrder): OrderNode {
+    append(order: InMarketOrderType): OrderNode {
         const node = new OrderNode(order);
 
         if (!this.head) {

@@ -1,315 +1,444 @@
-import { BalancesType, BaseReturnPayload, BaseReturnPayloadWithUser, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, Market, MarketId, MarketsType, MarketType, NATS_INCOMING_SUBJECT, NatsIncomingSubjectTypes, OnRampPayload, OrderId, OrderSide, OrderStatus, OrderType, PayloadToBackendType, PayloadToEngineType, PerpOrderBookType, PositionsType, STPMode, TimeInForce } from "@workspace/types";
+import { BalancesType, BaseReturnPayload, BaseReturnPayloadWithUser, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, Market, MarketId, MarketsType, MarketType, NATS_INCOMING_SUBJECT, NatsIncomingSubjectTypes, OnRampPayload, OnRampReturnPayload, OrderId, OrderSide, OrderStatus, OrderType, PayloadToBackendType, PayloadToEngineType, OrderBookType, PositionsType, OrderList, OrderNode, UserId } from "@workspace/types";
 import { OMSEngine } from "./oms-engine";
 import createRBTree from "functional-red-black-tree";
 import { BalanceEngine } from "./balance-engine";
 import { RejectError } from "../utils/error";
 import { OrderBook } from "./matching-engine";
+import { Position } from "./position-engine";
 
-export let BALANCES: BalancesType = new Map();
-export let ORDERBOOKS: PerpOrderBookType = new Map();
-export let POSITIONS: PositionsType = new Map();
-export let MARKETS: MarketsType = new Map();
-export let ORDERMAP: Map<OrderId, MarketId> = new Map();
+export class EngineState {
+
+    balances: BalancesType = new Map();
+
+    orderbooks: OrderBookType = new Map();
+
+    positions: PositionsType = new Map();
+
+    markets: MarketsType = new Map();
+
+    orderMap: Map<OrderId, MarketId> = new Map();
+}
 
 export const baseAsset: string[] = ["BTC", "ETH", "SOL"];
 export const quoteAsset: string[] = ["USD", "INR", "PERP"];
 
-// Todo - set this to get from database
-for (const base of baseAsset) {
-
-    BALANCES.set(base, new Map());
-
-    for (const quote of quoteAsset) {
-        const marketId = `${base}_${quote}`
-        MARKETS.set(marketId, {
-            id: marketId,
-            name: marketId,
-            baseAsset: base,
-            quoteAsset: quote,
-            maxLeverage: 50,
-            minQty: 1n,
-            tickSize: 1n,
-            lotSize: 1n,
-            minNotional: 1n // minQty * lastTradedprice
-        })
-
-        POSITIONS.set(marketId, new Map());
-
-        ORDERBOOKS.set(marketId, {
-            market: marketId,
-            tickSize: 1n,
-            lotSize: 1n,
-            bids: new Map(),
-            asks: new Map(),
-            bidTree: createRBTree<bigint, boolean>(),
-            askTree: createRBTree<bigint, boolean>(),
-            orderMap: new Map(),
-            userOrders: new Map(),
-            lastTradePrice: 0n,
-            indexPrice: 0n
-        })
-
-        BALANCES.set(quote, new Map());
-    }
-}
-
 export class Engine {
-    eventSequenceId: bigint = 1n;
-    private OMSChecker: OMSEngine = new OMSEngine();
-    private BalanceEngine: BalanceEngine = new BalanceEngine();
-    private OrderEngine: OrderBook = new OrderBook();
+    private eventSequenceId: bigint = 1n;
 
-    constructor() { }
+    private readonly state: EngineState;
 
+    private readonly OMSChecker: OMSEngine;
+
+    private readonly BalanceEngine: BalanceEngine;
+
+    private readonly OrderEngine: OrderBook;
+
+    private readonly PositionEngine: Position;
+
+    constructor() {
+
+        this.state = new EngineState();
+
+        this.initializeMarkets();
+
+        this.OMSChecker = new OMSEngine(this.state);
+
+        this.BalanceEngine = new BalanceEngine(this.state);
+
+        this.OrderEngine = new OrderBook(this.state);
+
+        this.PositionEngine = new Position(this.state);
+    }
+
+    private initializeMarkets() {
+
+        const baseAssets = ["BTC", "ETH", "SOL"];
+
+        const quoteAssets = ["USD", "INR", "PERP"];
+
+        for (const base of baseAssets) {
+
+            for (const quote of quoteAssets) {
+
+                const marketId = `${base}_${quote}`;
+
+                this.state.markets.set(marketId, {
+                    id: marketId,
+                    name: marketId,
+                    baseAsset: base,
+                    quoteAsset: quote,
+                    maxLeverage: 50,
+                    minQty: 1,
+                    tickSize: 1,
+                    lotSize: 1,
+                    minNotional: 1,
+                });
+
+                this.state.positions.set(
+                    marketId,
+                    new Map()
+                );
+
+                this.state.orderbooks.set(marketId, {
+                    market: marketId,
+                    tickSize: 1,
+                    lotSize: 1,
+                    bids: new Map<bigint, OrderList>(),
+                    asks: new Map<bigint, OrderList>(),
+                    bidTree: createRBTree<bigint, boolean>(),
+                    askTree: createRBTree<bigint, boolean>(),
+                    orderMap: new Map<OrderId, OrderNode>(),
+                    userOrders: new Map<UserId, Set<OrderId>>,
+                    lastTradePrice: 0n,
+                    indexPrice: 0n,
+                });
+            }
+        }
+    }
 
     async process(subject: NatsIncomingSubjectTypes, data: PayloadToEngineType): Promise<PayloadToBackendType> {
+
         try {
             switch (subject) {
+
                 case NATS_INCOMING_SUBJECT.HEALTH_CHECK:
-                    const toSend: BaseReturnPayload = {
+
+                    return {
                         success: true,
-                        eventId: this.eventSequenceId,
-                        message: "Hello from engine",
-                    }
-                    return toSend;
+                        eventId: this.getUpdatedEventId(),
+                        timestamp: Date.now(),
+                        message: "Engine healthy",
+                    };
 
                 case NATS_INCOMING_SUBJECT.ORDER_CREATE:
-                    const createPayloadData = data as CreateOrderPayload;
-                    return this.createOrder(createPayloadData);
+                    return this.createOrder(data as CreateOrderPayload);
 
                 case NATS_INCOMING_SUBJECT.ORDER_CANCEL:
-                    const cancelPayloadData = data as CancelOrderPayload;
-                    return this.cancelOrder(cancelPayloadData);
+                    return this.cancelOrder(data as CancelOrderPayload);
 
                 case NATS_INCOMING_SUBJECT.ORDER_OPEN_ORDERS:
-                    const openOrderPayloadData = data as GetUserOpenOrdersPayload;
-                    return this.getOpenOrders(openOrderPayloadData);
+                    return this.getOpenOrders(data as GetUserOpenOrdersPayload);
 
                 case NATS_INCOMING_SUBJECT.ORDER_GET:
-                    const getOrderPayloadData = data as GetOrderByIdPayload;
-                    return this.getOrder(getOrderPayloadData);
+                    return this.getOrder(data as GetOrderByIdPayload);
 
                 case NATS_INCOMING_SUBJECT.BALANCE_GET:
-                    const getBalancePayloadData = data as GetUserBalancesPayload;
-                    return this.getBalance(getBalancePayloadData);
+                    return this.getBalance(data as GetUserBalancesPayload);
 
                 case NATS_INCOMING_SUBJECT.ON_RAMP:
-                    const onRampPayloadData = data as OnRampPayload;
-                    return this.onRamp(onRampPayloadData);
+                    return this.onRamp(data as OnRampPayload);
 
                 case NATS_INCOMING_SUBJECT.DEPTH_GET:
-                    const getDepthPayloadData = data as GetDepthPayload;
-                    return this.getMarketDepth(getDepthPayloadData);
+                    return this.getMarketDepth(data as GetDepthPayload);
 
                 default:
-                    const errorData: BaseReturnPayload = {
-                        success: false,
-                        eventId: this.eventSequenceId,
-                        message: "No such subject available on engine",
-                    }
-                    return errorData;
+                    return this.internalError("Invalid subject");
             }
 
-        } catch (error: any) {
-            const errorData: BaseReturnPayload = {
-                success: false,
-                eventId: this.eventSequenceId,
-                message: error || "No such subject available on engine",
-            }
-            return errorData;
+        } catch (error) {
+
+            console.error(error);
+
+            return this.internalError(
+                "Internal engine error"
+            );
         }
-
     }
+
 
     private createOrder(payload: CreateOrderPayload): CreateOrderReturnPayload {
 
         try {
+
             this.OMSChecker.createOrderChecks(payload);
+
             this.BalanceEngine.lockBalance(payload);
 
-            // createdorder = orderbook create order
+            const result = this.OrderEngine.createOrder(payload);
 
-            // for spot
-            this.BalanceEngine.updateTakerBalance(payload);
-            this.BalanceEngine.updateMakerBalance(payload);
 
-            // for position
-            // send order too positions
+            for (const fill of result.fills) {
+
+                if (payload.marketType === MarketType.PERP) {
+                    this.PositionEngine.applyFill(fill);
+                } else {
+                    this.BalanceEngine.applyFill(fill);
+                }
+            }
+
+            this.BalanceEngine.releaseUnusedBalance(result);
 
             return {
                 success: true,
                 message: "Order created successfully",
                 userId: payload.userId,
-                eventId: 0n,
-                orderId: "",
-                order: {
-                    entryPrice: 0n,
-                    quantity: 0n,
-                    userId: "dcckhhg",
-                    marketId: "adfkjhg",
-                    side: OrderSide.LONG,
-                    type: OrderType.LIMIT,
-                    postOnly: false,
-                    stpMode: STPMode.CANCEL_TAKER,
-                    timeInForce: TimeInForce.GTC,
-                    createdAt: 425,
-                    marketType: MarketType.PERP,
-                    orderId: "sdfkkb",
-                    filled: 0n,
-                    status: OrderStatus.OPEN,
-                    leverage: 0,
-                    margin: 0n,
-                    reduceOnly: false,
-                    fills: [],
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                data: {
+                    order: result,
+                    orderId: result.orderId,
+                    status: result.status,
+                    averagePrice: (result.averagePrice).toString(),
+                    executedQty: (result.filled).toString(),
+                    remainingQty: (result.remainingQty).toString(),
+                    fills: result.fills,
+                    depths: result.depths,
                 },
-                status: OrderStatus.OPEN,
-                averagePrice: 0n,
-                executedQty: 0n,
-                remainingQty: 0n,
-                fills: [],
-                depths: { asks: [], bids: [] },
-            }
-
+            };
 
         } catch (error) {
+
             if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
+
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
             }
+
             console.error(error);
-            throw new Error(`Internal OMS engine error`);
-        }
-    }
 
-    private getBalance(payload: GetUserBalancesPayload): GetUserBalancesReturnPayload {
-        try {
-            const balances = this.BalanceEngine.getUserBalances(payload);
-
-            return {
-                success: true,
-                message: "Fetched user balances succssfully",
-                userId: payload.userId,
-                eventId: ++this.eventSequenceId,
-                balances
-            }
-
-        } catch (error) {
-            if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
-            }
-            console.error(error);
-            throw new Error(`Error Getting Balance`);
-        }
-    }
-
-    private onRamp(payload: OnRampPayload): BaseReturnPayloadWithUser {
-        try {
-            this.OMSChecker.UserBalanceCheck(payload);
-            const balances = this.BalanceEngine.addBalance(payload);
-
-            return {
-                success: true,
-                message: "Fetched user balances succssfully",
-                userId: payload.userId,
-                eventId: ++this.eventSequenceId,
-                ...balances,
-            }
-
-        } catch (error) {
-            if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
-            }
-            console.error(error);
-            throw new Error(`Error in Adding balance`);
+            return this.internalError("Create order failed") as CreateOrderReturnPayload;
         }
     }
 
     private cancelOrder(payload: CancelOrderPayload): CancelOrderReturnPayload {
+
         try {
+
             this.OMSChecker.cancelOrderChecks(payload);
+
             const order = this.OrderEngine.cancelOrder(payload);
+
+            /* =============================================
+               RELEASE LOCKED BALANCE
+            ============================================= */
+
+            this.BalanceEngine.releaseOrderMargin(order);
 
             return {
                 success: true,
-                message: "Fetched user balances succssfully",
                 userId: payload.userId,
-                eventId: ++this.eventSequenceId,
-                order
-            }
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Order canceled successfully",
+                data: { order },
+            };
 
         } catch (error) {
+
             if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
+
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
             }
+
             console.error(error);
-            throw new Error(`Error fetching balance`);
+
+            return this.internalError("Cancel order failed") as CancelOrderReturnPayload;
+        }
+    }
+
+    private getBalance(payload: GetUserBalancesPayload): GetUserBalancesReturnPayload {
+
+        try {
+
+            const balances = this.BalanceEngine.getUserBalances(payload);
+
+            return {
+                success: true,
+                userId: payload.userId,
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Balances fetched",
+                data: { balances },
+            };
+
+        } catch (error) {
+
+            if (error instanceof RejectError) {
+
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
+            }
+
+            console.error(error);
+
+            return this.internalError("Get balance failed") as GetUserBalancesReturnPayload;
+        }
+    }
+
+    private onRamp(payload: OnRampPayload): OnRampReturnPayload {
+
+        try {
+
+            this.OMSChecker.UserBalanceCheck(payload);
+
+            const balances = this.BalanceEngine.addBalance(payload);
+
+            return {
+                success: true,
+                userId: payload.userId,
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Balance added successfully",
+                data: { ...balances },
+            };
+
+        } catch (error) {
+
+            if (error instanceof RejectError) {
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
+            }
+
+            console.error(error);
+
+            return this.internalError("Onramp failed") as OnRampReturnPayload;
         }
     }
 
     private getOrder(payload: GetOrderByIdPayload): GetOrderByIdReturnPayload {
+
         try {
             this.OMSChecker.getOrderByIdCheck(payload);
+
             const order = this.OrderEngine.getUserOrders(payload);
 
             return {
                 success: true,
-                message: "Fetched user balances succssfully",
                 userId: payload.userId,
-                eventId: ++this.eventSequenceId,
-                order
-            }
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Order fetched",
+                data: { order },
+            };
 
         } catch (error) {
+
             if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
+
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
             }
+
             console.error(error);
-            throw new Error(`Error fetching balance`);
+
+            return this.internalError("Get order failed") as GetOrderByIdReturnPayload;
         }
     }
 
     private getOpenOrders(payload: GetUserOpenOrdersPayload): GetUserOpenOrdersReturnPayload {
+
         try {
             this.OMSChecker.getOpenOrderChecks(payload);
+
             const orders = this.OrderEngine.getUserOpenOrders(payload);
 
             return {
                 success: true,
-                message: "Fetched user balances succssfully",
                 userId: payload.userId,
-                eventId: ++this.eventSequenceId,
-                orders
-            }
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Open orders fetched",
+                data: { orders },
+            };
 
         } catch (error) {
+
             if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
+
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
             }
+
             console.error(error);
-            throw new Error(`Error fetching Users Open Orders`);
+
+            return this.internalError("Get open orders failed") as GetUserOpenOrdersReturnPayload;
         }
     }
 
     private getMarketDepth(payload: GetDepthPayload): GetDepthReturnPayload {
+
         try {
             this.OMSChecker.getDepthMarketCheck(payload);
+
             const data = this.OrderEngine.getMarketDepth(payload);
 
             return {
                 success: true,
-                message: "Fetched user balances succssfully",
-                eventId: ++this.eventSequenceId,
-                depths: data.depths,
-                market: data.market
-            }
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Depth fetched",
+                data: { ...data },
+            };
 
         } catch (error) {
+
             if (error instanceof RejectError) {
-                throw new Error(`${error.code}: ${error.message}`);
+
+                return {
+                    success: false,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
             }
+
             console.error(error);
-            throw new Error(`Error fetching Users Open Orders`);
+
+            return this.internalError("Depth fetch failed") as GetDepthReturnPayload;
         }
     }
 
+    private internalError(message: string): BaseReturnPayload {
 
+        return {
+            success: false,
+            eventId: this.getUpdatedEventId(),
+            timestamp: Date.now(),
+            message,
+        };
+    }
+
+    private getUpdatedEventId(): string {
+
+        return (++this.eventSequenceId).toString();
+    }
 }
+

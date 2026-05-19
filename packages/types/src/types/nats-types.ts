@@ -41,7 +41,7 @@ export type GetOrderByIdPayload = {
 export type OnRampPayload = {
     userId: UserId;
     asset: string;
-    amount: bigint;
+    amount: string;
 }
 
 export type GetUserBalancesPayload = {
@@ -81,7 +81,8 @@ export type PayloadToBackendType =
 export interface BaseReturnPayload {
     success: boolean;
     message: string;
-    eventId: bigint;
+    eventId: string;
+    timestamp: number;
     code?: EVENT_REJECT_CODES;
 }
 
@@ -90,39 +91,54 @@ export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
 }
 
 export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
-    orderId: string;
-    order: InMarketOrderType;
-    status: OrderStatus;
-    averagePrice: bigint;
-    executedQty: bigint;
-    remainingQty: bigint;
-    fills: FillType[];
-    depths: { asks: DepthType[], bids: DepthType[] };
+    data?: {
+        orderId: string;
+        order: InMarketOrderType;
+        status: OrderStatus;
+        averagePrice: string;
+        executedQty: string;
+        remainingQty: string;
+        fills: FillType[];
+        depths: { asks: DepthType[], bids: DepthType[] };
+    }
 }
 
 export interface CancelOrderReturnPayload extends BaseReturnPayloadWithUser {
-    order: InMarketOrderType;
+    data?: {
+        order: InMarketOrderType;
+    }
+
 }
 
 export interface GetUserOpenOrdersReturnPayload extends BaseReturnPayloadWithUser {
-    orders: InMarketOrderType[];
+    data?: {
+        orders: InMarketOrderType[];
+    }
 }
 
 export interface GetOrderByIdReturnPayload extends BaseReturnPayloadWithUser {
-    order: InMarketOrderType;
+    data?: {
+        order: InMarketOrderType;
+    }
 }
 
 export interface OnRampReturnPayload extends BaseReturnPayloadWithUser {
-    asset: string;
-    total: bigint;
-    locked: bigint;
+    data?: {
+        asset: string;
+        total: string;
+        locked: string;
+    }
 }
 
 export interface GetUserBalancesReturnPayload extends BaseReturnPayloadWithUser {
-    balances: ReturnBalanceType
+    data?: {
+        balances: ReturnBalanceType
+    }
 }
 
 export interface GetDepthReturnPayload extends BaseReturnPayload {
-    market: Market;
-    depths: { asks: DepthType[], bids: DepthType[] }
+    data?: {
+        market: Market;
+        depths: { asks: DepthType[], bids: DepthType[] }
+    }
 }
