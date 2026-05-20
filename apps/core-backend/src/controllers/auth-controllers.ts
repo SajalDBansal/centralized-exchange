@@ -1,12 +1,16 @@
 import type { RequestHandler, Request, Response } from "express";
 import { LoginUserSchema, RegisterUserSchema } from "@workspace/validations";
-import { AuthenticationError, ValidationError } from "../errors/error";
+import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
 import { prisma } from "@workspace/database";
 import config from "../utils/config";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cuid from "cuid";
 import { verifyJWTToken } from "../utils/verify-token";
+import { NatsManager } from "@workspace/nats-streams";
+import { AddUserPayload, BaseReturnPayload, NATS_INCOMING_SUBJECT } from "@workspace/types";
+
+const natsPromise = NatsManager.getInstance();
 
 export const signup: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
@@ -22,7 +26,16 @@ export const signup: RequestHandler = async (request: Request, response: Respons
     const passwordHash = await bcrypt.hash(password, config.BCRYPT_HASH);
 
     // TODO: Add verfication constraints here
-    await prisma.user.create({ data: { username, passwordHash, email, isVerified: true } });
+    const user = await prisma.user.create({ data: { username, passwordHash, email, isVerified: true } });
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<BaseReturnPayload, AddUserPayload>(
+        NATS_INCOMING_SUBJECT.USER_ADD, { userId: user.id }
+    );
+
+    console.log(res);
+    if (!res.success) throw new ApiError(400, res.message);
 
     return response.status(200).json({ success: true, message: "User Created Successfuly" });
 }

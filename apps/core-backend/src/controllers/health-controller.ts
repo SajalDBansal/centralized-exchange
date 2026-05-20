@@ -21,7 +21,12 @@ const marketEngineHealth: RequestHandler = async (request: Request, response: Re
             return response.status(500).json({ success: false, message: "The market engine server is down" });
         }
 
-        return response.status(200).json({ success: true, message: healthResponse.message });
+        return response.status(200).json({
+            success: true,
+            message: healthResponse.message,
+            eventId: healthResponse.eventId,
+            timestamp: healthResponse.timestamp,
+        });
 
     } catch (error) {
 

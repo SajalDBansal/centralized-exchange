@@ -1,12 +1,17 @@
 import {
+    AddMarketPayload,
     CancelOrderPayload,
     CreateOrderPayload,
+    DeleteMarketPayload,
     EVENT_REJECT_CODES,
     GetDepthPayload,
+    GetMarketByIdPayload,
     GetOrderByIdPayload,
     GetUserOpenOrdersPayload,
     Market,
     MarketType,
+    normalizeIncomingOrderType,
+    NormalizeOnRampType,
     OnRampPayload,
     OrderId,
     OrderList,
@@ -15,15 +20,14 @@ import {
     OrderType,
     STPMode,
     TimeInForce,
+    UpdateMarketPayload,
 } from "@workspace/types";
 
-import {
-    EngineState,
-    baseAsset,
-    quoteAsset,
-} from "./core-engine";
+import { EngineState, } from "./core-engine";
 
 import { RejectError } from "../utils/error";
+import { normalizeOrderIncoming, normalizeOnRampPayload } from "../utils/parse-incoming";
+import { baseAsset, quoteAsset } from "./market-engine";
 
 export class OMSEngine {
 
@@ -32,23 +36,28 @@ export class OMSEngine {
     // PUBLIC CHECKS
 
     createOrderChecks(order: CreateOrderPayload) {
+        const parsed = normalizeOrderIncoming(order);
 
-        const market = this.validateMarket(order.marketId);
+        const market = this.validateMarket(parsed.marketId);
 
-        this.validateBasicOrder(order);
+        this.validateBasicOrder(parsed);
 
-        this.validateTIF(order);
+        this.validateTIF(parsed);
 
-        this.validateMarketConstraints(order, market);
+        this.validateMarketConstraints(parsed, market);
 
-        this.validatePositionRules(order);
+        this.validatePositionRules(parsed);
 
-        this.validateOrderbookRules(order);
+        this.validateOrderbookRules(parsed);
 
-        this.validateRiskRules(order, market);
+        this.validateRiskRules(parsed, market);
+
+        return parsed;
     }
 
-    UserBalanceCheck(payload: OnRampPayload) {
+    UserBalanceCheck(payload: OnRampPayload): NormalizeOnRampType {
+
+        const parsed = normalizeOnRampPayload(payload);
 
         const inBase = baseAsset.includes(payload.asset);
 
@@ -57,6 +66,8 @@ export class OMSEngine {
         if (!inBase && !inQuote) {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Invalid asset");
         }
+
+        return parsed;
     }
 
     getOrderByIdCheck(payload: GetOrderByIdPayload) {
@@ -75,6 +86,61 @@ export class OMSEngine {
         this.validateOrderId(order.orderId);
     }
 
+    addUserCheck(userId: string) {
+        if (this.state.balances.has(userId)) {
+            this.reject(EVENT_REJECT_CODES.USER_ALREADY_EXISTS, "User already exists")
+        }
+    }
+
+    deleteMarketCheck(payload: DeleteMarketPayload) {
+        this.validateMarket(payload.marketId);
+    }
+
+    addMarketCheck(payload: AddMarketPayload) {
+        if (this.state.markets.has(payload.market.id)) {
+            this.reject(EVENT_REJECT_CODES.MARKET_ALREADY_EXISTS, "Market already exists");
+        }
+    }
+
+    getMarketByIdCheck(payload: GetMarketByIdPayload) {
+        this.validateMarket(payload.marketId);
+    }
+
+    updateMarketCheck(payload: UpdateMarketPayload) {
+        const market = this.validateMarket(payload.marketId);
+
+        if (payload.market.baseAsset && payload.market.baseAsset !== market.baseAsset) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Base asset cannot be changed");
+        }
+        if (payload.market.quoteAsset && payload.market.quoteAsset !== market.quoteAsset) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Quote asset cannot be changed");
+        }
+
+        if (payload.market.tickSize && payload.market.tickSize <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Tick size cannot be changed");
+        }
+
+        if (payload.market.lotSize && payload.market.lotSize <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Lot size cannot be changed");
+        }
+
+        if (payload.market.maxLeverage && payload.market.maxLeverage <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Max leverage cannot be changed");
+        }
+
+        if (payload.market.precision && payload.market.precision <= 0) {
+            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Precision cannot be changed");
+        }
+
+        if (payload.market.minQty && payload.market.minQty <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Min quantity cannot be changed");
+        }
+
+        if (payload.market.minNotional && payload.market.minNotional <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Min notional cannot be changed");
+        }
+    }
+
     // MARKET VALIDATION
 
     private validateMarket(marketId: string): Market {
@@ -90,7 +156,7 @@ export class OMSEngine {
 
     //    BASIC ORDER VALIDATION
 
-    private validateBasicOrder(order: CreateOrderPayload) {
+    private validateBasicOrder(order: normalizeIncomingOrderType) {
 
         if (order.side !== OrderSide.BUY && order.side !== OrderSide.SELL) {
 
@@ -102,7 +168,7 @@ export class OMSEngine {
             return this.reject(EVENT_REJECT_CODES.INVALID_ORDER_TYPE, "Invalid order type");
         }
 
-        if (BigInt(order.quantity) <= 0n) {
+        if (order.quantity <= 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Quantity must be positive");
         }
@@ -121,7 +187,7 @@ export class OMSEngine {
             return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Limit order requires price");
         }
 
-        if (typeof order.entryPrice !== "undefined" && BigInt(order.entryPrice) <= 0n) {
+        if (typeof order.entryPrice !== "undefined" && order.entryPrice <= 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Price must be positive");
         }
@@ -151,7 +217,7 @@ export class OMSEngine {
 
     //    TIME IN FORCE VALIDATION
 
-    private validateTIF(order: CreateOrderPayload) {
+    private validateTIF(order: normalizeIncomingOrderType) {
 
         if (order.type === OrderType.MARKET && order.timeInForce === TimeInForce.GTC) {
 
@@ -161,7 +227,7 @@ export class OMSEngine {
 
     //    MARKET CONSTRAINTS
 
-    private validateMarketConstraints(order: CreateOrderPayload, market: Market) {
+    private validateMarketConstraints(order: normalizeIncomingOrderType, market: Market) {
 
         if (order.marketType === MarketType.PERP) {
 
@@ -171,24 +237,24 @@ export class OMSEngine {
             }
         }
 
-        if (BigInt(order.quantity) < market.minQty) {
+        if (order.quantity < market.minQty) {
 
             return this.reject(EVENT_REJECT_CODES.BELOW_MIN_QTY, "Quantity below minimum");
         }
 
-        if (BigInt(order.quantity) % BigInt(market.lotSize) !== 0n) {
+        if (order.quantity % BigInt(market.lotSize) !== 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Invalid lot size");
         }
 
-        if (typeof order.entryPrice !== "undefined" && BigInt(order.entryPrice) % BigInt(market.tickSize) !== 0n) {
+        if (typeof order.entryPrice !== "undefined" && order.entryPrice % BigInt(market.tickSize) !== 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Invalid tick size");
         }
 
         if (typeof order.entryPrice !== "undefined") {
 
-            const notional = BigInt(order.entryPrice) * BigInt(order.quantity);
+            const notional = order.entryPrice * order.quantity;
 
             if (notional < market.minNotional) {
 
@@ -199,7 +265,7 @@ export class OMSEngine {
 
     //    POSITION RULES
 
-    private validatePositionRules(order: CreateOrderPayload) {
+    private validatePositionRules(order: normalizeIncomingOrderType) {
 
         if (order.marketType !== MarketType.PERP) {
             return;
@@ -235,7 +301,7 @@ export class OMSEngine {
 
     //    ORDERBOOK RULES
 
-    private validateOrderbookRules(order: CreateOrderPayload) {
+    private validateOrderbookRules(order: normalizeIncomingOrderType) {
 
         const orderbook = this.state.orderbooks.get(order.marketId);
 
@@ -261,12 +327,12 @@ export class OMSEngine {
 
             const bestBid = this.getBestBid(orderbook);
 
-            if (order.side === OrderSide.BUY && bestAsk !== null && BigInt(order.entryPrice!) >= bestAsk) {
+            if (order.side === OrderSide.BUY && bestAsk !== null && order.entryPrice! >= bestAsk) {
 
                 return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
 
-            if (order.side === OrderSide.SELL && bestBid !== null && BigInt(order.entryPrice!) <= bestBid) {
+            if (order.side === OrderSide.SELL && bestBid !== null && order.entryPrice! <= bestBid) {
 
                 return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
@@ -295,8 +361,8 @@ export class OMSEngine {
             const resting = node.order;
 
             const crosses = order.side === OrderSide.BUY
-                ? BigInt(order.entryPrice!) >= resting.entryPrice!
-                : BigInt(order.entryPrice!) <= resting.entryPrice!;
+                ? order.entryPrice! >= resting.entryPrice!
+                : order.entryPrice! <= resting.entryPrice!;
 
             if (crosses && resting.side !== order.side) {
 
@@ -326,16 +392,15 @@ export class OMSEngine {
 
     //    RISK RULES
 
-    private validateRiskRules(order: CreateOrderPayload, market: Market) {
+    private validateRiskRules(order: normalizeIncomingOrderType, market: Market) {
 
         //    MARKET LIQUIDITY
-
 
         if (order.type === OrderType.MARKET) {
 
             const liquidity = this.getAvailableLiquidity(order);
 
-            if (liquidity < BigInt(order.quantity)) {
+            if (liquidity < order.quantity) {
 
                 return this.reject(EVENT_REJECT_CODES.NO_LIQUIDITY, "Insufficient market liquidity");
             }
@@ -344,6 +409,60 @@ export class OMSEngine {
         //    SPOT
 
         if (order.marketType !== MarketType.PERP) {
+            const userBalances = this.state.balances.get(order.userId);
+
+            if (!userBalances) {
+
+                return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "User balances not found");
+            }
+
+            // SPOT BUY
+            // Needs quote asset balance
+
+            if (order.side === OrderSide.BUY) {
+
+                if (typeof order.entryPrice === "undefined") {
+
+                    return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Spot limit buy requires price");
+                }
+
+                const quoteBalance = userBalances.get(market.quoteAsset);
+
+                if (!quoteBalance) {
+
+                    return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Quote asset balance missing");
+                }
+
+                const requiredQuote = order.entryPrice * order.quantity;
+
+                const availableQuote = this.availableBalance(quoteBalance.total, quoteBalance.locked);
+
+                if (availableQuote < requiredQuote) {
+
+                    return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient quote balance");
+                }
+            }
+
+            // SPOT SELL
+            // Needs base asset balance
+
+            if (order.side === OrderSide.SELL) {
+
+                const baseBalance = userBalances.get(market.baseAsset);
+
+                if (!baseBalance) {
+
+                    return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Base asset balance missing");
+                }
+
+                const availableBase = this.availableBalance(baseBalance.total, baseBalance.locked);
+
+                if (availableBase < order.quantity) {
+
+                    return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient base asset balance");
+                }
+            }
+
             return;
         }
 
@@ -351,11 +470,9 @@ export class OMSEngine {
             return;
         }
 
-
         //    PERP MARGIN
 
-
-        const notional = BigInt(order.entryPrice) * BigInt(order.quantity);
+        const notional = order.entryPrice * order.quantity;
 
         const requiredMargin = notional / BigInt(order.leverage);
 
@@ -383,7 +500,7 @@ export class OMSEngine {
 
     //    LIQUIDITY
 
-    private getAvailableLiquidity(order: CreateOrderPayload): bigint {
+    private getAvailableLiquidity(order: normalizeIncomingOrderType): bigint {
 
         const orderbook = this.state.orderbooks.get(order.marketId);
 

@@ -1,6 +1,7 @@
 import { OrderList, OrderNode } from "../orderList";
-import { Market, MarketId, OrderId, OrderPosition, OrderSide, UserId } from "./base";
+import { Market, MarketId, MarketType, OrderId, OrderPosition, OrderSide, OrderType, STPMode, TimeInForce, UserId } from "./base";
 import { Tree } from "functional-red-black-tree";
+import { CreateOrderPayload } from "./nats-types";
 
 
 export interface AssetOrderbookType {
@@ -46,3 +47,42 @@ export type BaseBalanceType = Map<string, {
 export type BalancesType = Map<UserId, BaseBalanceType>;
 
 export type MarketsType = Map<MarketId, Market>;
+
+
+export type normalizeIncomingOrderType = {
+    quantity: bigint;
+    entryPrice: bigint | undefined;
+    margin: bigint | undefined;
+    marketType: MarketType.SPOT;
+    userId: string;
+    marketId: string;
+    side: OrderSide;
+    type: OrderType;
+    postOnly: boolean;
+    stpMode: STPMode;
+    position?: OrderPosition;
+    timeInForce: TimeInForce;
+    createdAt: number;
+} | {
+    quantity: bigint;
+    entryPrice: bigint | undefined;
+    margin: bigint | undefined;
+    marketType: MarketType.PERP;
+    leverage: number;
+    reduceOnly?: boolean;
+    userId: string;
+    marketId: MarketId;
+    side: OrderSide;
+    type: OrderType;
+    postOnly: boolean;
+    stpMode: STPMode;
+    position?: OrderPosition;
+    timeInForce: TimeInForce;
+    createdAt: number;
+}
+
+export type NormalizeOnRampType = {
+    userId: string;
+    asset: string;
+    amount: bigint;
+}

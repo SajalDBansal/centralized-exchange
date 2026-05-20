@@ -1,6 +1,7 @@
-import { DepthType, FillType, Market, MarketId, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
+import { DepthType, FillType, Market, MarketId, MarketType, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
+import { MarketsType } from "./engine";
 import { EVENT_REJECT_CODES } from "./oms";
-import { IncomingOrderType, InMarketOrderType } from "./spot";
+import { IncomingOrderType, InMarketOrderType, NormalizeOrderReturnType } from "./spot";
 
 export type NatsIncomingSubjectTypes = (typeof NATS_INCOMING_SUBJECT)[keyof typeof NATS_INCOMING_SUBJECT];
 
@@ -13,6 +14,12 @@ export enum NATS_INCOMING_SUBJECT {
     BALANCE_GET = "engine.balance.get",
     DEPTH_GET = "engine.depth.get",
     HEALTH_CHECK = "engine.health.check",
+    MARKET_GET_ALL = "engine.market.getAll",
+    MARKET_GET = "engine.market.get",
+    MARKET_ADD = "engine.market.add",
+    MARKET_UPDATE = "engine.market.update",
+    MARKET_DELETE = "engine.market.delete",
+    USER_ADD = "engine.user.add"
 }
 
 export type Handler<TReq, TRes> = (
@@ -56,6 +63,35 @@ export type HealthCheckPayload = {
     message: string;
 }
 
+export type GetMarketsPayload = {
+    userId: UserId;
+}
+
+export type GetMarketByIdPayload = {
+    userId: UserId;
+    marketId: MarketId;
+}
+
+export type AddMarketPayload = {
+    userId: UserId;
+    market: Market;
+}
+
+export type UpdateMarketPayload = {
+    userId: UserId;
+    marketId: MarketId;
+    market: Partial<Market>;
+}
+
+export type DeleteMarketPayload = {
+    userId: UserId;
+    marketId: MarketId;
+}
+
+export type AddUserPayload = {
+    userId: UserId;
+}
+
 export type PayloadToEngineType =
     CreateOrderPayload
     | CancelOrderPayload
@@ -64,7 +100,14 @@ export type PayloadToEngineType =
     | OnRampPayload
     | GetUserBalancesPayload
     | GetDepthPayload
-    | HealthCheckPayload;
+    | HealthCheckPayload
+    | GetMarketsPayload
+    | GetMarketByIdPayload
+    | AddMarketPayload
+    | UpdateMarketPayload
+    | DeleteMarketPayload
+    | AddUserPayload;
+;
 
 // --------------------------------------------------------
 
@@ -76,12 +119,17 @@ export type PayloadToBackendType =
     | GetOrderByIdReturnPayload
     | OnRampReturnPayload
     | GetUserBalancesReturnPayload
-    | GetDepthReturnPayload;
+    | GetDepthReturnPayload
+    | GetMarketsReturnPayload
+    | GetMarketByIdReturnPayload
+    | AddMarketReturnPayload
+    | UpdateMarketReturnPayload
+    | DeleteMarketReturnPayload;
 
 export interface BaseReturnPayload {
     success: boolean;
     message: string;
-    eventId: string;
+    eventId: number;
     timestamp: number;
     code?: EVENT_REJECT_CODES;
 }
@@ -93,7 +141,7 @@ export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
 export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
         orderId: string;
-        order: InMarketOrderType;
+        order: NormalizeOrderReturnType;
         status: OrderStatus;
         averagePrice: string;
         executedQty: string;
@@ -105,20 +153,20 @@ export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
 
 export interface CancelOrderReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        order: InMarketOrderType;
+        order: NormalizeOrderReturnType;
     }
 
 }
 
 export interface GetUserOpenOrdersReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        orders: InMarketOrderType[];
+        orders: NormalizeOrderReturnType[];
     }
 }
 
 export interface GetOrderByIdReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        order: InMarketOrderType;
+        order: NormalizeOrderReturnType;
     }
 }
 
@@ -140,5 +188,35 @@ export interface GetDepthReturnPayload extends BaseReturnPayload {
     data?: {
         market: Market;
         depths: { asks: DepthType[], bids: DepthType[] }
+    }
+}
+
+export interface GetMarketsReturnPayload extends BaseReturnPayloadWithUser {
+    data?: {
+        markets: MarketsType;
+    }
+}
+
+export interface GetMarketByIdReturnPayload extends BaseReturnPayloadWithUser {
+    data?: {
+        market: Market;
+    }
+}
+
+export interface AddMarketReturnPayload extends BaseReturnPayloadWithUser {
+    data?: {
+        market: Market;
+    }
+}
+
+export interface UpdateMarketReturnPayload extends BaseReturnPayloadWithUser {
+    data?: {
+        market: Market;
+    }
+}
+
+export interface DeleteMarketReturnPayload extends BaseReturnPayloadWithUser {
+    data?: {
+        marketId: MarketId;
     }
 }

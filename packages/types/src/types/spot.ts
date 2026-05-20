@@ -34,6 +34,42 @@ export interface PerpInMarketOrder extends BaseInMarketOrder {
 
 export type InMarketOrderType = SpotInMarketOrder | PerpInMarketOrder;
 
+type NormalizeSpotOrderReturnType =
+    Omit<
+        SpotInMarketOrder,
+        "entryPrice" |
+        "quantity" |
+        "remainingQty" |
+        "filled" |
+        "averagePrice"
+    > & {
+        entryPrice?: string;
+        quantity: string;
+        remainingQty: string;
+        filled: string;
+        averagePrice: string;
+    };
+
+type NormalizePerpOrderReturnType =
+    Omit<
+        PerpInMarketOrder,
+        "entryPrice" |
+        "quantity" |
+        "margin" |
+        "remainingQty" |
+        "filled" |
+        "averagePrice"
+    > & {
+        entryPrice?: string;
+        quantity: string;
+        margin: string;
+        remainingQty: string;
+        filled: string;
+        averagePrice: string;
+    };
+
+export type NormalizeOrderReturnType = NormalizeSpotOrderReturnType | NormalizePerpOrderReturnType;
+
 
 export type IncomingOrderType = BaseSpotOrderType | BasePerpOrderType;
 

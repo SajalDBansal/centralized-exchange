@@ -7,8 +7,9 @@
   "private": true,
   "devDependencies": {
     "@types/bun": "latest",
-    "@workspace/typescript-config": "workspace:*",
-    "@workspace/types": "workspace:*"
+    "@types/node": "^25.9.1",
+    "@workspace/types": "workspace:*",
+    "@workspace/typescript-config": "workspace:*"
   },
   "peerDependencies": {
     "typescript": "^5"

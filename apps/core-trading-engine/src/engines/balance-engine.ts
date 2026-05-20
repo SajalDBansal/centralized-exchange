@@ -1,10 +1,49 @@
-import { CancelOrderPayload, CreateOrderPayload, EVENT_REJECT_CODES, FillType, GetUserBalancesPayload, GetUserBalancesReturnPayload, InMarketOrderType, OnRampPayload, OnRampReturnPayload, ReturnBalanceType } from "@workspace/types";
+import { BalancesType, BaseReturnPayload, CreateOrderPayload, EVENT_REJECT_CODES, FillType, GetUserBalancesPayload, InMarketOrderType, MarketsType, normalizeIncomingOrderType, NormalizeOnRampType, ReturnBalanceType, UserId } from "@workspace/types";
 import { RejectError } from "../utils/error";
 import { EngineState } from "./core-engine";
+import { baseAsset, quoteAsset } from "./market-engine";
+
+type BalancesEngineDeps = {
+    balances: BalancesType;
+    markets: Readonly<MarketsType>;
+};
 
 export class BalanceEngine {
 
-    constructor(private readonly state: EngineState) { }
+    constructor(private readonly state: BalancesEngineDeps) { }
+
+    addUser(userId: UserId) {
+        if (this.state.balances.has(userId)) {
+            this.reject(EVENT_REJECT_CODES.USER_ALREADY_EXISTS, "User already exists")
+        }
+
+        this.state.balances.set(userId, new Map());
+        const balances = this.state.balances.get(userId);
+
+        if (!balances) {
+            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Failed to initialize user balances")
+        }
+
+        for (const base of baseAsset) {
+            balances.set(base, {
+                total: 0n,
+                locked: 0n
+            })
+        }
+
+        for (const quote of quoteAsset) {
+            balances.set(quote, {
+                total: 0n,
+                locked: 0n
+            })
+        }
+
+        return {
+            success: true,
+            message: "User added successfully"
+        };
+
+    }
 
     getUserBalances(payload: GetUserBalancesPayload): ReturnBalanceType {
         const balances = this.state.balances.get(payload.userId);
@@ -26,7 +65,7 @@ export class BalanceEngine {
         return userbalance;
     }
 
-    addBalance(payload: OnRampPayload) {
+    addBalance(payload: NormalizeOnRampType) {
         const { userId, asset, amount } = payload;
         let balances = this.state.balances.get(userId);
         if (!balances) {
@@ -50,7 +89,7 @@ export class BalanceEngine {
         }
     }
 
-    lockBalance(order: CreateOrderPayload) { }
+    lockBalance(order: normalizeIncomingOrderType) { }
 
     applyFill(fill: FillType) { }
 

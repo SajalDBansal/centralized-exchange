@@ -57,6 +57,7 @@ export interface Market {
     baseAsset: string;
     quoteAsset: string;
     maxLeverage: number;
+    precision: number;
     minQty: number; // convert to bigint for calc
     tickSize: number; // convert to bigint for calc
     lotSize: number; // convert to bigint for calc
@@ -72,7 +73,7 @@ export interface BaseOrderType {
     type: OrderType;
     postOnly: boolean;
     stpMode: STPMode;
-    position: OrderPosition;
+    position?: OrderPosition;
     timeInForce: TimeInForce;
     createdAt: number;
 }

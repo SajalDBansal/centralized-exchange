@@ -1,4 +1,4 @@
-import { CancelOrderPayload, CreateOrderPayload, DepthType, EVENT_REJECT_CODES, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetUserOpenOrdersPayload, InMarketOrderType, Market, MarketType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "@workspace/types";
+import { CancelOrderPayload, DepthType, EVENT_REJECT_CODES, GetDepthPayload, GetOrderByIdPayload, GetUserOpenOrdersPayload, InMarketOrderType, Market, MarketType, normalizeIncomingOrderType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "@workspace/types";
 import { EngineState } from "./core-engine";
 import { RejectError } from "../utils/error";
 
@@ -18,7 +18,7 @@ export class OrderBook {
 
     }
 
-    createOrder(payload: CreateOrderPayload): InMarketOrderType {
+    createOrder(payload: normalizeIncomingOrderType): InMarketOrderType {
         return {
             entryPrice: 0n,
             quantity: 0n,
@@ -84,11 +84,11 @@ export class OrderBook {
             userId: "dcckhhg",
             marketId: "adfkjhg",
             side: OrderSide.BUY,
+            position: OrderPosition.LONG,
+            remainingQty: 0n,
             type: OrderType.LIMIT,
             postOnly: false,
             averagePrice: 0n,
-            position: OrderPosition.LONG,
-            remainingQty: 0n,
             stpMode: STPMode.CANCEL_TAKER,
             timeInForce: TimeInForce.GTC,
             createdAt: 425,
@@ -112,6 +112,7 @@ export class OrderBook {
                 id: "sd,fjb",
                 baseAsset: "szdvdk,kjh",
                 quoteAsset: "sdk",
+                precision: 1,
                 name: "sfkjhh",
                 maxLeverage: 50,
                 minQty: 1,
