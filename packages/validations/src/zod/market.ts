@@ -9,6 +9,12 @@ export const GetMarketByIdClientSchema = z.object({
     marketId: z.string()
 });
 
+export const AddMarketAssetClientSchema = z.object({
+    userId: z.string(),
+    asset: z.string(),
+    assetSide: z.enum(["base", "quote"])
+});
+
 export const AddMarketClientSchema = z.object({
     userId: z.string(),
     market: z.object({

@@ -10,7 +10,7 @@ import marketRouter from "./market-router";
 const appRouter: Router = Router();
 
 appRouter.use("/auth", authRouter);
-appRouter.use("/market", requireAuth, marketRouter);
+appRouter.use("/market", marketRouter);
 appRouter.use("/user", requireAuth, userRouter);
 appRouter.use("/order", requireAuth, orderRouter);
 appRouter.use("/depth", requireAuth, depthRouter);

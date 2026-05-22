@@ -1,4 +1,5 @@
 import {
+    AddMarketAssetPayload,
     AddMarketPayload,
     CancelOrderPayload,
     CreateOrderPayload,
@@ -59,13 +60,7 @@ export class OMSEngine {
 
         const parsed = normalizeOnRampPayload(payload);
 
-        const inBase = baseAsset.includes(payload.asset);
-
-        const inQuote = quoteAsset.includes(payload.asset);
-
-        if (!inBase && !inQuote) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Invalid asset");
-        }
+        this.validateAsset(parsed.asset);
 
         return parsed;
     }
@@ -92,8 +87,53 @@ export class OMSEngine {
         }
     }
 
-    deleteMarketCheck(payload: DeleteMarketPayload) {
-        this.validateMarket(payload.marketId);
+    private validateAsset(asset: string) {
+        const supported = new Set<string>();
+
+        for (const market of this.state.markets.values()) {
+            supported.add(market.baseAsset);
+            supported.add(market.quoteAsset);
+        }
+
+        if (!supported.has(asset)) {
+            this.reject(
+                EVENT_REJECT_CODES.INVALID_ASSET,
+                "Unsupported asset"
+            );
+        }
+    }
+
+    deleteMarketCheck(payload: DeleteMarketPayload): Market {
+        const market = this.validateMarket(payload.marketId);
+
+        const orderbook = this.state.orderbooks.get(payload.marketId);
+
+        if (orderbook) {
+            if (orderbook.asks.size > 0 || orderbook.bids.size > 0) {
+                this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has open orders");
+            }
+
+        }
+
+        if (this.state.positions.has(payload.marketId)) {
+            const marketPositions = this.state.positions.get(payload.marketId);
+            if (marketPositions && marketPositions.size > 0) {
+                this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has open positions");
+            }
+        }
+
+        if (this.state.balances.size > 0) {
+            for (const [userId, balances] of this.state.balances.entries()) {
+                const baseBalance = balances.get(market.baseAsset);
+                const quoteBalance = balances.get(market.quoteAsset);
+                if ((baseBalance && baseBalance.total > 0n) || (quoteBalance && quoteBalance.total > 0n)) {
+                    this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has user balances");
+                }
+            }
+        }
+
+
+        return market;
     }
 
     addMarketCheck(payload: AddMarketPayload) {
@@ -102,8 +142,22 @@ export class OMSEngine {
         }
     }
 
-    getMarketByIdCheck(payload: GetMarketByIdPayload) {
-        this.validateMarket(payload.marketId);
+    addMarketAssetCheck(payload: AddMarketAssetPayload) {
+        const supported = new Set<string>();
+
+        for (const market of this.state.markets.values()) {
+            supported.add(market.baseAsset);
+            supported.add(market.quoteAsset);
+        }
+
+        if (supported.has(payload.asset)) {
+            this.reject(EVENT_REJECT_CODES.ASSET_ALREADY_EXISTS, "Asset Already exists in a market");
+        }
+    }
+
+    getMarketByIdCheck(payload: GetMarketByIdPayload): Market {
+        const market = this.validateMarket(payload.marketId);
+        return market;
     }
 
     updateMarketCheck(payload: UpdateMarketPayload) {
@@ -117,27 +171,27 @@ export class OMSEngine {
         }
 
         if (payload.market.tickSize && payload.market.tickSize <= 0) {
-            this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Tick size cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Tick size can not be less than or equal to 0");
         }
 
         if (payload.market.lotSize && payload.market.lotSize <= 0) {
-            this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Lot size cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Lot size can not be less than or equal to 0");
         }
 
         if (payload.market.maxLeverage && payload.market.maxLeverage <= 0) {
-            this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Max leverage cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Max leverage can not be less than or equal to 0");
         }
 
         if (payload.market.precision && payload.market.precision <= 0) {
-            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Precision cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Precision can not be less than or equal to 0");
         }
 
         if (payload.market.minQty && payload.market.minQty <= 0) {
-            this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Min quantity cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Min quantity can not be less than or equal to 0");
         }
 
         if (payload.market.minNotional && payload.market.minNotional <= 0) {
-            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Min notional cannot be changed");
+            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Min notional can not be less than or equal to 0");
         }
     }
 

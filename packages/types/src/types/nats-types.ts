@@ -19,6 +19,7 @@ export enum NATS_INCOMING_SUBJECT {
     MARKET_ADD = "engine.market.add",
     MARKET_UPDATE = "engine.market.update",
     MARKET_DELETE = "engine.market.delete",
+    MARKET_ADD_ASSET = "engine.market.asset.add",
     USER_ADD = "engine.user.add"
 }
 
@@ -88,6 +89,12 @@ export type DeleteMarketPayload = {
     marketId: MarketId;
 }
 
+export type AddMarketAssetPayload = {
+    userId: UserId;
+    asset: string;
+    assetSide: "base" | "quote";
+}
+
 export type AddUserPayload = {
     userId: UserId;
 }
@@ -106,6 +113,7 @@ export type PayloadToEngineType =
     | AddMarketPayload
     | UpdateMarketPayload
     | DeleteMarketPayload
+    | AddMarketAssetPayload
     | AddUserPayload;
 ;
 
@@ -113,6 +121,7 @@ export type PayloadToEngineType =
 
 export type PayloadToBackendType =
     BaseReturnPayload
+    | BaseReturnPayloadWithUser
     | CreateOrderReturnPayload
     | CancelOrderReturnPayload
     | GetUserOpenOrdersReturnPayload
@@ -193,7 +202,7 @@ export interface GetDepthReturnPayload extends BaseReturnPayload {
 
 export interface GetMarketsReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        markets: MarketsType;
+        markets: { [k: string]: Market; };
     }
 }
 

@@ -1,16 +1,34 @@
-import { BalancesType, BaseReturnPayload, CreateOrderPayload, EVENT_REJECT_CODES, FillType, GetUserBalancesPayload, InMarketOrderType, MarketsType, normalizeIncomingOrderType, NormalizeOnRampType, ReturnBalanceType, UserId } from "@workspace/types";
+import { AssetOrderbookType, BalancesType, BaseReturnPayload, CreateOrderPayload, EVENT_REJECT_CODES, FillType, GetUserBalancesPayload, InMarketOrderType, Market, MarketId, normalizeIncomingOrderType, NormalizeOnRampType, OrderId, ReturnBalanceType, UserId, UserPosition } from "@workspace/types";
 import { RejectError } from "../utils/error";
-import { EngineState } from "./core-engine";
-import { baseAsset, quoteAsset } from "./market-engine";
 
-type BalancesEngineDeps = {
+type ReadonlyEngineState = {
+    readonly markets: ReadonlyMap<MarketId, Market>;
+
+    readonly orderbooks: ReadonlyMap<MarketId, AssetOrderbookType>;
+
+    readonly positions: ReadonlyMap<MarketId, UserPosition>;
+
+    readonly orderMap: ReadonlyMap<OrderId, MarketId>;
+};
+
+type BalancesEngineDeps = ReadonlyEngineState & {
     balances: BalancesType;
-    markets: Readonly<MarketsType>;
 };
 
 export class BalanceEngine {
 
     constructor(private readonly state: BalancesEngineDeps) { }
+
+    private getAllAssets(): Set<string> {
+        const assets = new Set<string>();
+
+        for (const market of this.state.markets.values()) {
+            assets.add(market.baseAsset);
+            assets.add(market.quoteAsset);
+        }
+
+        return assets;
+    }
 
     addUser(userId: UserId) {
         if (this.state.balances.has(userId)) {
@@ -24,15 +42,8 @@ export class BalanceEngine {
             this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Failed to initialize user balances")
         }
 
-        for (const base of baseAsset) {
-            balances.set(base, {
-                total: 0n,
-                locked: 0n
-            })
-        }
-
-        for (const quote of quoteAsset) {
-            balances.set(quote, {
+        for (const asset of this.getAllAssets()) {
+            balances.set(asset, {
                 total: 0n,
                 locked: 0n
             })
@@ -69,8 +80,7 @@ export class BalanceEngine {
         const { userId, asset, amount } = payload;
         let balances = this.state.balances.get(userId);
         if (!balances) {
-            balances = new Map();
-            this.state.balances.set(userId, balances);
+            this.reject(EVENT_REJECT_CODES.USER_NOT_FOUND, "User not found");
         }
         const existing = balances.get(asset);
 
@@ -94,6 +104,7 @@ export class BalanceEngine {
     applyFill(fill: FillType) { }
 
     releaseUnusedBalance(order: InMarketOrderType) { }
+
     releaseOrderMargin(order: InMarketOrderType) { }
 
     updateTakerBalance(order: CreateOrderPayload) { }

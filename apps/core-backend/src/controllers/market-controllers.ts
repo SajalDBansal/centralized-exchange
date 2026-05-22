@@ -1,8 +1,8 @@
 import { NatsManager } from "@workspace/nats-streams";
 import { Request, RequestHandler, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { AddMarketPayload, AddMarketReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsPayload, GetMarketsReturnPayload, NATS_INCOMING_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload } from "@workspace/types";
-import { AddMarketClientSchema, GetMarketByIdClientSchema, UpdateMarketClientSchema } from "@workspace/validations";
+import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsPayload, GetMarketsReturnPayload, NATS_INCOMING_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload } from "@workspace/types";
+import { AddMarketAssetClientSchema, AddMarketClientSchema, GetMarketByIdClientSchema, UpdateMarketClientSchema } from "@workspace/validations";
 
 const natsPromise = NatsManager.getInstance();
 
@@ -10,6 +10,8 @@ export const getMarkets: RequestHandler = async (request: Request, response: Res
 
     // const userId = request.userId;
     const userId = "1243";
+    console.log("Get markets");
+
 
     if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
 
@@ -149,5 +151,34 @@ export const deleteMarket: RequestHandler = async (request: Request, response: R
         success: res.success,
         message: res.message,
         data: res.data
+    });
+}
+
+export const addAsset: RequestHandler = async (request: Request, response: Response) => {
+    const body = request.body;
+
+    // const userId = request.userId;
+    const userId = "1243";
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = AddMarketAssetClientSchema.safeParse({ userId, ...body });
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { asset, assetSide } = validateData.data;
+
+    const nats = await natsPromise;
+
+    const res = await nats.request<BaseReturnPayloadWithUser, AddMarketAssetPayload>(
+        NATS_INCOMING_SUBJECT.MARKET_ADD_ASSET,
+        { userId, asset, assetSide }
+    );
+
+    if (!res.success) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: res.success,
+        message: res.message,
     });
 }
