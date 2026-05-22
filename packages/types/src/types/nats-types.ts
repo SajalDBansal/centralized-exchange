@@ -3,9 +3,9 @@ import { MarketsType } from "./engine";
 import { EVENT_REJECT_CODES } from "./oms";
 import { IncomingOrderType, InMarketOrderType, NormalizeOrderReturnType } from "./spot";
 
-export type NatsIncomingSubjectTypes = (typeof NATS_INCOMING_SUBJECT)[keyof typeof NATS_INCOMING_SUBJECT];
+export type IncomingEventTypes = (typeof EVENT_TO_ENGINE_SUBJECT)[keyof typeof EVENT_TO_ENGINE_SUBJECT];
 
-export enum NATS_INCOMING_SUBJECT {
+export enum EVENT_TO_ENGINE_SUBJECT {
     ORDER_CREATE = "engine.order.create",
     ORDER_CANCEL = "engine.order.cancel",
     ORDER_OPEN_ORDERS = "engine.order.openOrders",
@@ -24,7 +24,7 @@ export enum NATS_INCOMING_SUBJECT {
 }
 
 export type Handler<TReq, TRes> = (
-    subject: NatsIncomingSubjectTypes,
+    subject: IncomingEventTypes,
     data: TReq
 ) => Promise<TRes>;
 

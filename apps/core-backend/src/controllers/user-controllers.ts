@@ -3,7 +3,7 @@ import { ApiError, AuthenticationError, ValidationError } from "../errors/error"
 import { verifyJWTToken } from "../utils/verify-token";
 import { prisma } from "@workspace/database";
 import { NatsManager } from "@workspace/nats-streams";
-import { GetUserBalancesPayload, GetUserBalancesReturnPayload, NATS_INCOMING_SUBJECT, OnRampPayload, OnRampReturnPayload } from "@workspace/types";
+import { GetUserBalancesPayload, GetUserBalancesReturnPayload, EVENT_TO_ENGINE_SUBJECT, OnRampPayload, OnRampReturnPayload } from "@workspace/types";
 import { OnRampSchema } from "@workspace/validations";
 
 const natsPromise = NatsManager.getInstance();
@@ -35,7 +35,7 @@ export const getBalance: RequestHandler = async (request: Request, response: Res
     if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
 
     const res = await nats.request<GetUserBalancesReturnPayload, GetUserBalancesPayload>(
-        NATS_INCOMING_SUBJECT.BALANCE_GET, { userId }
+        EVENT_TO_ENGINE_SUBJECT.BALANCE_GET, { userId }
     );
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
@@ -62,7 +62,7 @@ export const addBalance: RequestHandler = async (request: Request, response: Res
     const { asset, amount } = validateData.data;
 
     const res = await nats.request<OnRampReturnPayload, OnRampPayload>(
-        NATS_INCOMING_SUBJECT.ON_RAMP, { userId, asset, amount }
+        EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, asset, amount }
     );
 
     if (!res.success) throw new ApiError(400, res.message);

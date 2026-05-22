@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import cuid from "cuid";
 import { verifyJWTToken } from "../utils/verify-token";
 import { NatsManager } from "@workspace/nats-streams";
-import { AddUserPayload, BaseReturnPayload, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { AddUserPayload, BaseReturnPayload, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 
 const natsPromise = NatsManager.getInstance();
 
@@ -31,7 +31,7 @@ export const signup: RequestHandler = async (request: Request, response: Respons
     const nats = await natsPromise;
 
     const res = await nats.request<BaseReturnPayload, AddUserPayload>(
-        NATS_INCOMING_SUBJECT.USER_ADD, { userId: user.id }
+        EVENT_TO_ENGINE_SUBJECT.USER_ADD, { userId: user.id }
     );
 
     console.log(res);

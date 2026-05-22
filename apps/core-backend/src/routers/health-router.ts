@@ -7,6 +7,7 @@ const healthRouter: Router = Router();
 // Engines
 healthRouter.get("/core-backend", asyncHandler(healthController.coreBackendHealth));
 healthRouter.get("/market-engine", asyncHandler(healthController.marketEngineHealth));
+healthRouter.get("/redis", asyncHandler(healthController.redisHealthCheck));
 healthRouter.get("/ws-engine", asyncHandler(healthController.wsServerHealth));
 healthRouter.get("/database-engine", asyncHandler(healthController.databaseEngineHealth));
 healthRouter.get("/snapshot-engine", asyncHandler(healthController.snapshotEngineHealth));

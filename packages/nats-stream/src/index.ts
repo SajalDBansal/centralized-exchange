@@ -1,7 +1,7 @@
 import cuid from "cuid";
 import { connect, Empty } from "nats";
 import type { NatsConnection, Subscription, Msg } from "nats";
-import type { NatsIncomingSubjectTypes } from "@workspace/types";
+import type { IncomingEventTypes } from "@workspace/types";
 import "dotenv/config";
 
 const NATS_URL = process.env.NATS_URL;
@@ -34,7 +34,7 @@ function decodePayload<T>(data: Uint8Array): T {
 }
 
 type Handler<TReq, TRes> = (
-    subject: NatsIncomingSubjectTypes,
+    subject: IncomingEventTypes,
     data: TReq
 ) => Promise<TRes>;
 
@@ -84,7 +84,7 @@ export class NatsManager {
     }
 
     public async request<TRes, TReq = void>(
-        subject: NatsIncomingSubjectTypes,
+        subject: IncomingEventTypes,
         payload?: TReq,
         timeout = 5000
     ): Promise<TRes> {
@@ -111,7 +111,7 @@ export class NatsManager {
     private async handleMessage<TReq, TRes>(msg: Msg, handler: Handler<TReq, TRes>) {
         try {
             const data = (msg.data.length === 0 ? undefined : decodePayload<TReq>(msg.data)) as TReq;
-            const subject = msg.subject as NatsIncomingSubjectTypes;
+            const subject = msg.subject as IncomingEventTypes;
             const result = await handler(subject, data);
 
             if (msg.reply) {
@@ -129,7 +129,7 @@ export class NatsManager {
         }
     }
 
-    public publish<T>(subject: NatsIncomingSubjectTypes, payload: T) {
+    public publish<T>(subject: IncomingEventTypes, payload: T) {
         this.nc.publish(subject, encodePayload(payload));
     }
 

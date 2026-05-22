@@ -1,4 +1,4 @@
-import { BalancesType, BaseReturnPayload, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, MarketId, MarketsType, MarketType, NATS_INCOMING_SUBJECT, NatsIncomingSubjectTypes, OnRampPayload, OnRampReturnPayload, OrderId, PayloadToBackendType, PayloadToEngineType, OrderBookType, PositionsType, OrderList, OrderNode, UserId, GetMarketByIdPayload, GetMarketByIdReturnPayload, AddMarketPayload, GetMarketsPayload, GetMarketsReturnPayload, UpdateMarketPayload, UpdateMarketReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, AddUserPayload, BaseReturnPayloadWithUser, AddMarketAssetPayload } from "@workspace/types";
+import { BalancesType, BaseReturnPayload, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, MarketId, MarketsType, MarketType, EVENT_TO_ENGINE_SUBJECT, IncomingEventTypes, OnRampPayload, OnRampReturnPayload, OrderId, PayloadToBackendType, PayloadToEngineType, OrderBookType, PositionsType, OrderList, OrderNode, UserId, GetMarketByIdPayload, GetMarketByIdReturnPayload, AddMarketPayload, GetMarketsPayload, GetMarketsReturnPayload, UpdateMarketPayload, UpdateMarketReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, AddUserPayload, BaseReturnPayloadWithUser, AddMarketAssetPayload } from "@workspace/types";
 import { OMSEngine } from "./oms-engine";
 import createRBTree from "functional-red-black-tree";
 import { BalanceEngine } from "./balance-engine";
@@ -57,12 +57,12 @@ export class Engine {
         this.marketEngine.initializeMarkets();
     }
 
-    process = async (subject: NatsIncomingSubjectTypes, data: PayloadToEngineType): Promise<PayloadToBackendType> => {
+    process = async (subject: IncomingEventTypes, data: PayloadToEngineType): Promise<PayloadToBackendType> => {
 
         try {
             switch (subject) {
 
-                case NATS_INCOMING_SUBJECT.HEALTH_CHECK:
+                case EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK:
 
                     return {
                         success: true,
@@ -71,46 +71,46 @@ export class Engine {
                         message: "Engine healthy",
                     };
 
-                case NATS_INCOMING_SUBJECT.ORDER_CREATE:
+                case EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE:
                     return this.createOrder(data as CreateOrderPayload);
 
-                case NATS_INCOMING_SUBJECT.ORDER_CANCEL:
+                case EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL:
                     return this.cancelOrder(data as CancelOrderPayload);
 
-                case NATS_INCOMING_SUBJECT.ORDER_OPEN_ORDERS:
+                case EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS:
                     return this.getOpenOrders(data as GetUserOpenOrdersPayload);
 
-                case NATS_INCOMING_SUBJECT.ORDER_GET:
+                case EVENT_TO_ENGINE_SUBJECT.ORDER_GET:
                     return this.getOrder(data as GetOrderByIdPayload);
 
-                case NATS_INCOMING_SUBJECT.BALANCE_GET:
+                case EVENT_TO_ENGINE_SUBJECT.BALANCE_GET:
                     return this.getBalance(data as GetUserBalancesPayload);
 
-                case NATS_INCOMING_SUBJECT.ON_RAMP:
+                case EVENT_TO_ENGINE_SUBJECT.ON_RAMP:
                     return this.onRamp(data as OnRampPayload);
 
-                case NATS_INCOMING_SUBJECT.DEPTH_GET:
+                case EVENT_TO_ENGINE_SUBJECT.DEPTH_GET:
                     return this.getMarketDepth(data as GetDepthPayload);
 
-                case NATS_INCOMING_SUBJECT.USER_ADD:
+                case EVENT_TO_ENGINE_SUBJECT.USER_ADD:
                     return this.userAdd(data as AddUserPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_GET_ALL:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL:
                     return this.getAllMarkets(data as GetMarketsPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_GET:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_GET:
                     return this.getMarketById(data as GetMarketByIdPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_ADD:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_ADD:
                     return this.addMarket(data as AddMarketPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_UPDATE:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE:
                     return this.updateMarket(data as UpdateMarketPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_DELETE:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE:
                     return this.deleteMarket(data as DeleteMarketPayload);
 
-                case NATS_INCOMING_SUBJECT.MARKET_ADD_ASSET:
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET:
                     return this.addMarketAsset(data as AddMarketAssetPayload);
 
                 default:

@@ -39,6 +39,7 @@
     "@workspace/eslint-config": "workspace:^",
     "@workspace/jest-presets": "workspace:*",
     "@workspace/nats-streams": "workspace:*",
+    "@workspace/redis-streams": "workspace:*",
     "@workspace/types": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "@workspace/validations": "workspace:*",

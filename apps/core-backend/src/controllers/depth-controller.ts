@@ -1,7 +1,7 @@
 import type { RequestHandler, Request, Response } from "express";
 import { ApiError, ValidationError } from "../errors/error";
 import { NatsManager } from "@workspace/nats-streams";
-import { GetDepthPayload, GetDepthReturnPayload, MarketId, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { GetDepthPayload, GetDepthReturnPayload, MarketId, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 
 const natsPromise = NatsManager.getInstance();
 
@@ -13,7 +13,7 @@ export const getDepthByMarket: RequestHandler = async (request: Request, respons
     const nats = await natsPromise;
 
     const res = await nats.request<GetDepthReturnPayload, GetDepthPayload>(
-        NATS_INCOMING_SUBJECT.DEPTH_GET,
+        EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
         { marketId }
     );
 

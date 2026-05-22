@@ -1,6 +1,8 @@
 import { NatsManager } from "@workspace/nats-streams";
-import { BaseReturnPayload, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { BaseReturnPayload, EventSource, IncomingEventTypes, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 import type { Request, RequestHandler, Response } from "express";
+import { backendRouter } from "../utils/backendResponseRouter";
+import { ApiError } from "../errors/error";
 
 // Servers check
 const coreBackendHealth: RequestHandler = async (request: Request, response: Response) => {
@@ -15,7 +17,7 @@ const marketEngineHealth: RequestHandler = async (request: Request, response: Re
     const nats = await NatsManager.getInstance();
 
     try {
-        const healthResponse = await nats.request<BaseReturnPayload>(NATS_INCOMING_SUBJECT.HEALTH_CHECK);
+        const healthResponse = await nats.request<BaseReturnPayload>(EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK);
 
         if (!healthResponse.success) {
             return response.status(500).json({ success: false, message: "The market engine server is down" });
@@ -34,6 +36,28 @@ const marketEngineHealth: RequestHandler = async (request: Request, response: Re
     }
 }
 
+const redisHealthCheck: RequestHandler = async (request: Request, response: Response) => {
+
+    try {
+        // Await the Redis request-reply sequence
+        const result = await backendRouter.request({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK,
+            payload: {}
+        });
+        if (!result.success) {
+            throw new ApiError(400, result.payload.message || "Failed to health check");
+        }
+        return response.status(200).json({
+            success: true,
+            message: result.payload.message || "Health check processed successfully",
+            redis: result.payload,
+        });
+    } catch (error: any) {
+        throw new ApiError(500, error.message);
+    }
+}
+
 // UPDATE_ROUTE
 const wsServerHealth: RequestHandler = async (request: Request, response: Response) => { }
 const databaseEngineHealth: RequestHandler = async (request: Request, response: Response) => { }
@@ -47,4 +71,4 @@ const s3BucketHealth: RequestHandler = async (request: Request, response: Respon
 
 
 export { coreBackendHealth, marketEngineHealth, wsServerHealth, databaseEngineHealth, snapshotEngineHealth };
-export { postgreseHealth, redisPubSubHealth, natsStreamHealth, s3BucketHealth }
+export { postgreseHealth, redisPubSubHealth, natsStreamHealth, s3BucketHealth, redisHealthCheck }

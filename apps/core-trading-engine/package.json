@@ -20,6 +20,7 @@
     "@workspace/database": "workspace:*",
     "@workspace/eslint-config": "workspace:^",
     "@workspace/nats-streams": "workspace:*",
+    "@workspace/redis-streams": "workspace:*",
     "@workspace/types": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "esbuild": "^0.20.1",

@@ -1,7 +1,7 @@
 import type { RequestHandler, Request, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
 import { NatsManager } from "@workspace/nats-streams";
-import { CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, NATS_INCOMING_SUBJECT } from "@workspace/types";
+import { CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 import { CancelOrGetOrderClientSchema, CreateOrderClientSchema, GetOpenOrdersClientSchema } from "@workspace/validations";
 import { prisma } from "@workspace/database";
 
@@ -25,7 +25,7 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
 
     const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
-        NATS_INCOMING_SUBJECT.ORDER_CREATE,
+        EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
         {
             entryPrice, quantity, userId, marketId,
             side, type, postOnly, stpMode, position,
@@ -62,7 +62,7 @@ export const cancelOrder: RequestHandler = async (request: Request, response: Re
     const nats = await natsPromise;
 
     const res = await nats.request<CancelOrderReturnPayload, CancelOrderPayload>(
-        NATS_INCOMING_SUBJECT.ORDER_CANCEL,
+        EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL,
         { userId, orderId }
     );
 
@@ -91,7 +91,7 @@ export const getAllOrderById: RequestHandler = async (request: Request, response
     const nats = await natsPromise;
 
     const res = await nats.request<GetOrderByIdReturnPayload, GetOrderByIdPayload>(
-        NATS_INCOMING_SUBJECT.ORDER_GET,
+        EVENT_TO_ENGINE_SUBJECT.ORDER_GET,
         { orderId, userId }
     );
 
@@ -120,7 +120,7 @@ export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, 
     const nats = await natsPromise;
 
     const res = await nats.request<GetUserOpenOrdersReturnPayload, GetUserOpenOrdersPayload>(
-        NATS_INCOMING_SUBJECT.ORDER_OPEN_ORDERS,
+        EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS,
         { userId, marketId }
     );
 

@@ -1,7 +1,7 @@
 import { NatsManager } from "@workspace/nats-streams";
 import { Request, RequestHandler, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsPayload, GetMarketsReturnPayload, NATS_INCOMING_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload } from "@workspace/types";
+import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsPayload, GetMarketsReturnPayload, EVENT_TO_ENGINE_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload } from "@workspace/types";
 import { AddMarketAssetClientSchema, AddMarketClientSchema, GetMarketByIdClientSchema, UpdateMarketClientSchema } from "@workspace/validations";
 
 const natsPromise = NatsManager.getInstance();
@@ -18,7 +18,7 @@ export const getMarkets: RequestHandler = async (request: Request, response: Res
     const nats = await natsPromise;
 
     const res = await nats.request<GetMarketsReturnPayload, GetMarketsPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_GET_ALL,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL,
         { userId }
     );
 
@@ -49,7 +49,7 @@ export const getMarketById: RequestHandler = async (request: Request, response: 
     const nats = await natsPromise;
 
     const res = await nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_GET,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
         { userId, marketId }
     );
 
@@ -79,7 +79,7 @@ export const addMarket: RequestHandler = async (request: Request, response: Resp
     const nats = await natsPromise;
 
     const res = await nats.request<AddMarketReturnPayload, AddMarketPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_ADD,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
         { userId, market }
     );
 
@@ -111,7 +111,7 @@ export const updateMarket: RequestHandler = async (request: Request, response: R
     const nats = await natsPromise;
 
     const res = await nats.request<UpdateMarketReturnPayload, UpdateMarketPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_UPDATE,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE,
         { userId, marketId, market }
     );
 
@@ -141,7 +141,7 @@ export const deleteMarket: RequestHandler = async (request: Request, response: R
     const nats = await natsPromise;
 
     const res = await nats.request<DeleteMarketReturnPayload, DeleteMarketPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_DELETE,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE,
         { userId, marketId }
     );
 
@@ -171,7 +171,7 @@ export const addAsset: RequestHandler = async (request: Request, response: Respo
     const nats = await natsPromise;
 
     const res = await nats.request<BaseReturnPayloadWithUser, AddMarketAssetPayload>(
-        NATS_INCOMING_SUBJECT.MARKET_ADD_ASSET,
+        EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET,
         { userId, asset, assetSide }
     );
 
