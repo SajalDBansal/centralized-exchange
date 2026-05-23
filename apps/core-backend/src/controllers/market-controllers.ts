@@ -1,26 +1,33 @@
 import { NatsManager } from "@workspace/nats-streams";
 import { Request, RequestHandler, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsPayload, GetMarketsReturnPayload, EVENT_TO_ENGINE_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload } from "@workspace/types";
+import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsReturnPayload, EVENT_TO_ENGINE_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload, GetAssetsReturnPayload } from "@workspace/types";
 import { AddMarketAssetClientSchema, AddMarketClientSchema, GetMarketByIdClientSchema, UpdateMarketClientSchema } from "@workspace/validations";
+import cuid from "cuid";
 
 const natsPromise = NatsManager.getInstance();
 
 export const getMarkets: RequestHandler = async (request: Request, response: Response) => {
 
-    // const userId = request.userId;
-    const userId = "1243";
-    console.log("Get markets");
+    const nats = await natsPromise;
 
+    const res = await nats.request<GetMarketsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
 
-    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: res.success,
+        message: res.message,
+        data: res.data
+    });
+
+}
+
+export const getAssets: RequestHandler = async (request: Request, response: Response) => {
 
     const nats = await natsPromise;
 
-    const res = await nats.request<GetMarketsReturnPayload, GetMarketsPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL,
-        { userId }
-    );
+    const res = await nats.request<GetAssetsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET);
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -35,12 +42,7 @@ export const getMarkets: RequestHandler = async (request: Request, response: Res
 export const getMarketById: RequestHandler = async (request: Request, response: Response) => {
     const params = request.params;
 
-    // const userId = request.userId;
-    const userId = "1243";
-
-    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
-
-    const validateData = GetMarketByIdClientSchema.safeParse({ userId, ...params });
+    const validateData = GetMarketByIdClientSchema.safeParse({ ...params });
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
@@ -49,8 +51,7 @@ export const getMarketById: RequestHandler = async (request: Request, response: 
     const nats = await natsPromise;
 
     const res = await nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
-        { userId, marketId }
+        EVENT_TO_ENGINE_SUBJECT.MARKET_GET, { marketId }
     );
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
@@ -80,7 +81,7 @@ export const addMarket: RequestHandler = async (request: Request, response: Resp
 
     const res = await nats.request<AddMarketReturnPayload, AddMarketPayload>(
         EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
-        { userId, market }
+        { userId, market: { ...market, id: `${market.baseAssetId}_${market.quoteAssetId}` } }
     );
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
@@ -172,7 +173,7 @@ export const addAsset: RequestHandler = async (request: Request, response: Respo
 
     const res = await nats.request<BaseReturnPayloadWithUser, AddMarketAssetPayload>(
         EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET,
-        { userId, asset, assetSide }
+        { userId, asset: { ...asset, id: asset.symbol }, assetSide }
     );
 
     if (!res.success) throw new ApiError(400, res.message);

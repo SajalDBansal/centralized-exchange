@@ -1,42 +1,77 @@
-import { AssetOrderbookType, BalancesType, BaseBalanceType, EVENT_REJECT_CODES, Market, MarketId, MarketsType, OrderBookType, OrderId, OrderList, OrderNode, PositionsType, UserId, UserPosition } from "@workspace/types";
+import { AddMarketType, Asset, BaseBalanceType, EVENT_REJECT_CODES, Market, MarketId, MarketsType, OrderId, UserPosition } from "@workspace/types";
 import { RejectError } from "../utils/error";
-import createRBTree from "functional-red-black-tree";
+import { SingleMarketOrderBook } from "./single-orderbook";
 
-type ReadonlyEngineState = {
-
-    readonly balances: ReadonlyMap<string, BaseBalanceType>;
-
-    readonly orderMap: ReadonlyMap<OrderId, MarketId>;
-};
-
-type MarketEngineDeps = ReadonlyEngineState & {
-    markets: MarketsType; // mutable
-    orderbooks: Map<string, AssetOrderbookType>;
+type MarketEngineDeps = {
+    markets: MarketsType;
+    orderbooks: Map<string, SingleMarketOrderBook>;
     positions: Map<string, UserPosition>;
+    orderMap: Map<OrderId, MarketId>;
+    assets: Map<string, Asset>;
+    balances: Map<string, BaseBalanceType>;
 };
 
-export const baseAsset: string[] = ["BTC", "ETH", "SOL"];
-export const quoteAsset: string[] = ["USD", "INR", "PERP"];
+export const baseAsset: Asset[] = [
+    {
+        symbol: "BTC",
+        precision: 2,
+        id: "BTC"
+    },
+    {
+        symbol: "ETH",
+        precision: 2,
+        id: "ETH"
+    },
+    {
+        symbol: "SOL",
+        precision: 2,
+        id: "SOL"
+    }
+]
+
+export const quoteAsset: Asset[] = [
+    {
+        symbol: "INR",
+        precision: 2,
+        id: "INR"
+    },
+    {
+        symbol: "USD",
+        precision: 2,
+        id: "USD"
+    }
+]
+
+export const DEFAULT_QUOTE_ASSET_PERP = quoteAsset.find(a => a.symbol === "USD");
 
 export class MarketEngine {
+
 
     constructor(private state: MarketEngineDeps) { }
 
 
     initializeMarkets() {
+        // Prevent re-initialization if markets already exist
+        if (this.state.markets.size > 0) return;
+
+        for (const base of baseAsset) {
+            this.state.assets.set(base.id, base);
+        }
+        for (const quote of quoteAsset) {
+            if (quote.symbol !== "PERP") this.state.assets.set(quote.id, quote);
+        }
 
         for (const base of baseAsset) {
 
             for (const quote of quoteAsset) {
 
-                const marketId = `${base}_${quote}`;
+                const marketName = `${base.symbol}_${quote.symbol}`;
 
-                this.state.markets.set(marketId, {
-                    id: marketId,
-                    name: marketId,
+                this.state.markets.set(marketName, {
+                    id: marketName,
+                    name: marketName,
                     baseAsset: base,
                     quoteAsset: quote,
-                    precision: 0,
                     maxLeverage: 50,
                     minQty: 1,
                     tickSize: 1,
@@ -45,30 +80,42 @@ export class MarketEngine {
                 });
 
                 this.state.positions.set(
-                    marketId,
+                    marketName,
                     new Map()
                 );
 
-                this.state.orderbooks.set(marketId, {
-                    market: marketId,
-                    tickSize: 1,
-                    lotSize: 1,
-                    bids: new Map<bigint, OrderList>(),
-                    asks: new Map<bigint, OrderList>(),
-                    bidTree: createRBTree<bigint, boolean>(),
-                    askTree: createRBTree<bigint, boolean>(),
-                    orderMap: new Map<OrderId, OrderNode>(),
-                    userOrders: new Map<UserId, Set<OrderId>>(),
-                    lastTradePrice: 0n,
-                    indexPrice: 0n,
-                });
+                const market = this.state.markets.get(marketName);
+
+                if (!market) {
+                    this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Failed to initialize market");
+                }
+
+                this.state.orderbooks.set(marketName, new SingleMarketOrderBook(market, this.state.orderMap));
             }
+
+            // Create perp markets
+            const marketName = `${base.symbol}_PERP`;
+
+            this.state.markets.set(marketName, {
+                id: marketName,
+                name: marketName,
+                baseAsset: base,
+                quoteAsset: DEFAULT_QUOTE_ASSET_PERP!,
+                maxLeverage: 50,
+                minQty: 1,
+                tickSize: 1,
+                lotSize: 1,
+                minNotional: 1,
+            });
         }
     }
 
-
     getMarkets(): Record<string, Market> {
         return Object.fromEntries(this.state.markets);
+    }
+
+    getAssets(): Record<string, Asset> {
+        return Object.fromEntries(this.state.assets);
     }
 
     getMarketById(marketId: MarketId): Market {
@@ -86,19 +133,30 @@ export class MarketEngine {
         return updatedMarket;
     }
 
-    addMarket(marketData: Market) {
+    addMarket(marketData: AddMarketType) {
         if (this.state.markets.has(marketData.id)) {
             this.reject(EVENT_REJECT_CODES.MARKET_ALREADY_EXISTS, "Market already exists");
         }
 
-        if (!baseAsset.includes(marketData.baseAsset) || !quoteAsset.includes(marketData.quoteAsset)) {
+        const selectedBase = this.state.assets.get(marketData.baseAssetId);
+        const selectedQuote = this.state.assets.get(marketData.quoteAssetId);
+
+        if (!selectedBase || !selectedQuote) {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Invalid base or quote asset");
         }
 
-        this.state.markets.set(marketData.id, marketData);
+        const newMarket: Market = {
+            ...marketData,
+            baseAsset: selectedBase,
+            quoteAsset: selectedQuote
+        }
+
+        this.state.markets.set(marketData.id, newMarket);
+
+        this.state.positions.set(marketData.id, new Map());
+        this.state.orderbooks.set(marketData.id, new SingleMarketOrderBook(newMarket, this.state.orderMap));
     }
 
-    // TODO: add check to see if there are any open positions/orders in the market before deleting
     deleteMarket(marketId: MarketId) {
         const market = this.getMarketById(marketId);
         if (!this.state.markets.has(market.id)) {
@@ -125,16 +183,16 @@ export class MarketEngine {
 
         if (this.state.balances.size > 0) {
             for (const [userId, balances] of this.state.balances.entries()) {
-                const baseBalance = balances.get(market.baseAsset);
-                const quoteBalance = balances.get(market.quoteAsset);
+                const baseBalance = balances.get(market.baseAsset.id);
+                const quoteBalance = balances.get(market.quoteAsset.id);
                 if ((baseBalance && baseBalance.total > 0n) || (quoteBalance && quoteBalance.total > 0n)) {
                     this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has user balances");
                 } else {
                     if (baseBalance) {
-                        balances.delete(market.baseAsset);
+                        balances.delete(market.baseAsset.id);
                     }
                     if (quoteBalance) {
-                        balances.delete(market.quoteAsset);
+                        balances.delete(market.quoteAsset.id);
                     }
                 }
             }
@@ -143,20 +201,24 @@ export class MarketEngine {
         this.state.markets.delete(market.id);
     }
 
-    addMarketAsset(asset: string, assetSide: "base" | "quote") {
-        if (assetSide === "base") {
-            if (baseAsset.includes(asset)) {
-                this.reject(EVENT_REJECT_CODES.ASSET_ALREADY_EXISTS, "Base asset already exists");
+    addMarketAsset(asset: Asset, assetSide: "base" | "quote") {
+        this.state.assets.forEach(a => {
+            if (a.symbol === asset.symbol) {
+                this.reject(EVENT_REJECT_CODES.ASSET_ALREADY_EXISTS, "Asset already exists");
             }
-            baseAsset.push(asset);
-        } else {
-            if (quoteAsset.includes(asset)) {
-                this.reject(EVENT_REJECT_CODES.ASSET_ALREADY_EXISTS, "Quote asset already exists");
-            }
-            quoteAsset.push(asset);
-        }
-    }
+        })
 
+        if (assetSide === "base") {
+            baseAsset.push(asset);
+            this.state.assets.set(asset.id, asset);
+        } else {
+            quoteAsset.push(asset);
+            this.state.assets.set(asset.id, asset);
+        }
+
+        this.state.balances.forEach(userBalance => userBalance.set(asset.id, { total: 0n, locked: 0n }))
+
+    }
 
     private reject(code: EVENT_REJECT_CODES, message: string): never {
         throw new RejectError(code, message);

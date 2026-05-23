@@ -1,7 +1,7 @@
-import { BaseOrderType, DepthType, FillType, MarketId, MarketType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "./base"
+import { BaseOrderType, DepthType, FillType, InMarketFillType, MarketId, MarketType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "./base"
 
 interface BaseInMarketOrder {
-    entryPrice?: bigint; // convert to bigint for calc
+    entryPrice: bigint; // convert to bigint for calc
     quantity: bigint; // convert to bigint for calc
     userId: string;
     marketId: MarketId;
@@ -17,7 +17,7 @@ interface BaseInMarketOrder {
     remainingQty: bigint;
     status: OrderStatus;
     averagePrice: bigint;
-    fills: FillType[];
+    fills: InMarketFillType[];
     depths: { asks: DepthType[], bids: DepthType[] };
 }
 
@@ -29,7 +29,7 @@ export interface PerpInMarketOrder extends BaseInMarketOrder {
     marketType: MarketType.PERP;
     leverage: number;
     margin: bigint;
-    reduceOnly?: boolean;
+    reduceOnly: boolean;
 }
 
 export type InMarketOrderType = SpotInMarketOrder | PerpInMarketOrder;
@@ -41,13 +41,15 @@ type NormalizeSpotOrderReturnType =
         "quantity" |
         "remainingQty" |
         "filled" |
-        "averagePrice"
+        "averagePrice" |
+        "fills"
     > & {
-        entryPrice?: string;
+        entryPrice: string;
         quantity: string;
         remainingQty: string;
         filled: string;
         averagePrice: string;
+        fills: FillType[];
     };
 
 type NormalizePerpOrderReturnType =
@@ -58,14 +60,16 @@ type NormalizePerpOrderReturnType =
         "margin" |
         "remainingQty" |
         "filled" |
-        "averagePrice"
+        "averagePrice" |
+        "fills"
     > & {
-        entryPrice?: string;
+        entryPrice: string;
         quantity: string;
         margin: string;
         remainingQty: string;
         filled: string;
         averagePrice: string;
+        fills: FillType[];
     };
 
 export type NormalizeOrderReturnType = NormalizeSpotOrderReturnType | NormalizePerpOrderReturnType;
@@ -82,5 +86,5 @@ export interface BasePerpOrderType extends BaseOrderType {
     marketType: MarketType.PERP;
     leverage: number;
     margin: string;
-    reduceOnly?: boolean;
+    reduceOnly: boolean;
 }

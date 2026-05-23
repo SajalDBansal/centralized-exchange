@@ -1,4 +1,4 @@
-import { DepthType, FillType, Market, MarketId, MarketType, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
+import { Asset, DepthType, FillType, Market, MarketId, MarketType, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
 import { MarketsType } from "./engine";
 import { EVENT_REJECT_CODES } from "./oms";
 import { IncomingOrderType, InMarketOrderType, NormalizeOrderReturnType } from "./spot";
@@ -15,6 +15,7 @@ export enum EVENT_TO_ENGINE_SUBJECT {
     DEPTH_GET = "engine.depth.get",
     HEALTH_CHECK = "engine.health.check",
     MARKET_GET_ALL = "engine.market.getAll",
+    MARKET_GET_ALL_ASSET = "engine.market.getAll.asset",
     MARKET_GET = "engine.market.get",
     MARKET_ADD = "engine.market.add",
     MARKET_UPDATE = "engine.market.update",
@@ -48,7 +49,7 @@ export type GetOrderByIdPayload = {
 
 export type OnRampPayload = {
     userId: UserId;
-    asset: string;
+    assetId: string;
     amount: string;
 }
 
@@ -64,24 +65,31 @@ export type HealthCheckPayload = {
     message: string;
 }
 
-export type GetMarketsPayload = {
-    userId: UserId;
+export type GetMarketByIdPayload = {
+    marketId: MarketId;
 }
 
-export type GetMarketByIdPayload = {
-    userId: UserId;
-    marketId: MarketId;
+export type AddMarketType = {
+    id: MarketId;
+    name: string;
+    baseAssetId: string;
+    quoteAssetId: string;
+    maxLeverage: number;
+    minQty: number;
+    tickSize: number;
+    lotSize: number;
+    minNotional: number;
 }
 
 export type AddMarketPayload = {
     userId: UserId;
-    market: Market;
+    market: AddMarketType;
 }
 
 export type UpdateMarketPayload = {
     userId: UserId;
     marketId: MarketId;
-    market: Partial<Market>;
+    market: Partial<AddMarketType>;
 }
 
 export type DeleteMarketPayload = {
@@ -91,7 +99,7 @@ export type DeleteMarketPayload = {
 
 export type AddMarketAssetPayload = {
     userId: UserId;
-    asset: string;
+    asset: Asset;
     assetSide: "base" | "quote";
 }
 
@@ -108,7 +116,6 @@ export type PayloadToEngineType =
     | GetUserBalancesPayload
     | GetDepthPayload
     | HealthCheckPayload
-    | GetMarketsPayload
     | GetMarketByIdPayload
     | AddMarketPayload
     | UpdateMarketPayload
@@ -149,14 +156,7 @@ export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
 
 export interface CreateOrderReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        orderId: string;
         order: NormalizeOrderReturnType;
-        status: OrderStatus;
-        averagePrice: string;
-        executedQty: string;
-        remainingQty: string;
-        fills: FillType[];
-        depths: { asks: DepthType[], bids: DepthType[] };
     }
 }
 
@@ -181,7 +181,7 @@ export interface GetOrderByIdReturnPayload extends BaseReturnPayloadWithUser {
 
 export interface OnRampReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
-        asset: string;
+        assetId: string;
         total: string;
         locked: string;
     }
@@ -195,18 +195,23 @@ export interface GetUserBalancesReturnPayload extends BaseReturnPayloadWithUser 
 
 export interface GetDepthReturnPayload extends BaseReturnPayload {
     data?: {
-        market: Market;
         depths: { asks: DepthType[], bids: DepthType[] }
     }
 }
 
-export interface GetMarketsReturnPayload extends BaseReturnPayloadWithUser {
+export interface GetMarketsReturnPayload extends BaseReturnPayload {
     data?: {
         markets: { [k: string]: Market; };
     }
 }
 
-export interface GetMarketByIdReturnPayload extends BaseReturnPayloadWithUser {
+export interface GetAssetsReturnPayload extends BaseReturnPayload {
+    data?: {
+        assets: { [k: string]: Asset; };
+    }
+}
+
+export interface GetMarketByIdReturnPayload extends BaseReturnPayload {
     data?: {
         market: Market;
     }

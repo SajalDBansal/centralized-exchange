@@ -1,131 +1,133 @@
-import { CancelOrderPayload, DepthType, EVENT_REJECT_CODES, GetDepthPayload, GetOrderByIdPayload, GetUserOpenOrdersPayload, InMarketOrderType, Market, MarketType, normalizeIncomingOrderType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "@workspace/types";
-import { EngineState } from "./core-engine";
+import {
+    BaseBalanceType,
+    CancelOrderPayload,
+    DepthType,
+    EVENT_REJECT_CODES,
+    GetDepthPayload,
+    GetOrderByIdPayload,
+    GetUserOpenOrdersPayload,
+    InMarketOrderType,
+    Market,
+    MarketId,
+    normalizeIncomingOrderType,
+    OrderId,
+    OrderStatus,
+    UserPosition,
+} from "@workspace/types";
+import cuid from "cuid";
 import { RejectError } from "../utils/error";
+import { SingleMarketOrderBook } from "./single-orderbook";
 
-export class OrderBook {
+type ReadonlyEngineState = {
+    readonly markets: ReadonlyMap<MarketId, Market>;
+    readonly balances: ReadonlyMap<string, BaseBalanceType>;
+    readonly positions: ReadonlyMap<MarketId, UserPosition>;
+};
 
-    constructor(private readonly state: EngineState) { }
+type MatchingEngineDeps = ReadonlyEngineState & {
+    orderbooks: Map<MarketId, SingleMarketOrderBook>;
+    orderMap: Map<OrderId, MarketId>;
+    orders: Map<OrderId, InMarketOrderType>;
+};
 
-    getBestAsk(): bigint | undefined {
-        return 0n;
-    }
+export class MatchingEngine {
+    constructor(private readonly state: MatchingEngineDeps) { }
 
-    getBestBid(): bigint | undefined {
-        return 0n;
-    }
+    initializeMarket(market: Market) {
+        if (this.state.orderbooks.has(market.id)) {
+            this.reject(EVENT_REJECT_CODES.MARKET_ALREADY_EXISTS, "Orderbook already exists");
+        }
 
-    initializeMarket() {
-
+        this.state.orderbooks.set(market.id, new SingleMarketOrderBook(market, this.state.orderMap));
     }
 
     createOrder(payload: normalizeIncomingOrderType): InMarketOrderType {
-        return {
-            entryPrice: 0n,
-            quantity: 0n,
-            userId: "dcckhhg",
-            marketId: "adfkjhg",
-            side: OrderSide.BUY,
-            position: OrderPosition.LONG,
-            remainingQty: 0n,
-            type: OrderType.LIMIT,
-            postOnly: false,
-            averagePrice: 0n,
-            stpMode: STPMode.CANCEL_TAKER,
-            timeInForce: TimeInForce.GTC,
-            createdAt: 425,
-            marketType: MarketType.PERP,
-            orderId: "sdfkkb",
-            filled: 0n,
-            status: OrderStatus.OPEN,
-            leverage: 0,
-            margin: 0n,
-            reduceOnly: false,
-            fills: [],
-            depths: { asks: [], bids: [] }
+        const orderbook = this.state.orderbooks.get(payload.marketId);
+
+        if (!orderbook) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
         }
 
+        const order: InMarketOrderType = {
+            ...payload,
+            orderId: cuid(),
+            filled: 0n,
+            remainingQty: payload.quantity,
+            averagePrice: 0n,
+            status: OrderStatus.OPEN,
+            fills: [],
+            depths: { asks: [], bids: [] },
+        } as InMarketOrderType;
+
+        const result = orderbook.addOrder(order);
+        this.state.orders.set(result.orderId, result);
+
+        return result;
     }
 
-    getUserOrders(payload: GetOrderByIdPayload): InMarketOrderType {
+    cancelOrder(payload: CancelOrderPayload): InMarketOrderType {
         const marketId = this.state.orderMap.get(payload.orderId);
 
         if (!marketId) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "No market name found");
+            this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order not found");
         }
 
         const orderbook = this.state.orderbooks.get(marketId);
 
         if (!orderbook) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "No orderbook found for the market");
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
         }
 
-        const orderNode = orderbook.orderMap.get(payload.orderId);
+        return orderbook.cancelOrder(payload);
+    }
 
-        if (!orderNode) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Ordernode not found");
+    getUserOrderByID(payload: GetOrderByIdPayload): InMarketOrderType {
+        const order = this.state.orders.get(payload.orderId);
+
+        if (order) {
+            if (order.userId !== payload.userId) {
+                this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Unauthorized");
+            }
+
+            return order;
         }
 
-        const order = orderNode.order;
+        const marketId = this.state.orderMap.get(payload.orderId);
 
-        return order;
+        if (!marketId) {
+            this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order not found");
+        }
+
+        const orderbook = this.state.orderbooks.get(marketId);
+
+        if (!orderbook) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
+        }
+
+        return orderbook.getUserOrderByID(payload);
     }
 
     getUserOpenOrders(payload: GetUserOpenOrdersPayload): InMarketOrderType[] {
+        const orderbook = this.state.orderbooks.get(payload.marketId);
 
+        if (!orderbook) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
+        }
 
-        return []
+        return orderbook.getUserOpenOrders(payload.userId);
     }
 
-    cancelOrder(payload: CancelOrderPayload): InMarketOrderType {
+    getMarketDepth(payload: GetDepthPayload): { depths: { asks: DepthType[]; bids: DepthType[]; } } {
+        const orderbook = this.state.orderbooks.get(payload.marketId);
 
-        return {
-            entryPrice: 0n,
-            quantity: 0n,
-            userId: "dcckhhg",
-            marketId: "adfkjhg",
-            side: OrderSide.BUY,
-            position: OrderPosition.LONG,
-            remainingQty: 0n,
-            type: OrderType.LIMIT,
-            postOnly: false,
-            averagePrice: 0n,
-            stpMode: STPMode.CANCEL_TAKER,
-            timeInForce: TimeInForce.GTC,
-            createdAt: 425,
-            marketType: MarketType.PERP,
-            orderId: "sdfkkb",
-            filled: 0n,
-            status: OrderStatus.OPEN,
-            leverage: 0,
-            margin: 0n,
-            reduceOnly: false,
-            fills: [],
-            depths: { asks: [], bids: [] }
+        if (!orderbook) {
+            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
         }
-    }
 
-    getMarketDepth(payload: GetDepthPayload): { market: Market, depths: { asks: DepthType[], bids: DepthType[] } } {
-
-
-        return {
-            market: {
-                id: "sd,fjb",
-                baseAsset: "szdvdk,kjh",
-                quoteAsset: "sdk",
-                precision: 1,
-                name: "sfkjhh",
-                maxLeverage: 50,
-                minQty: 1,
-                tickSize: 1,
-                lotSize: 1,
-                minNotional: 1
-            },
-            depths: { asks: [], bids: [] }
-        }
+        return { depths: orderbook.getDepth() };
     }
 
     private reject(code: EVENT_REJECT_CODES, message: string): never {
         throw new RejectError(code, message);
     }
-
 }

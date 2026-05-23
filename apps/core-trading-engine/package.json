@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "cuid": "^3.0.0",
     "functional-red-black-tree": "^1.0.1"
   },
   "devDependencies": {

@@ -10,8 +10,7 @@ const natsPromise = NatsManager.getInstance();
 export const createOrder: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
 
-    // const userId = request.userId;
-    const userId = "1243";
+    const userId = request.userId;
 
     if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
 
@@ -23,7 +22,6 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     const nats = await natsPromise;
 
-
     const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
         EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
         {
@@ -34,8 +32,6 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
         }
     );
 
-
-    console.log(res);
     if (!res.success) throw new ApiError(400, res.message);
 
     return response.status(200).json({

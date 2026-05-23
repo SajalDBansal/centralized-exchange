@@ -59,10 +59,10 @@ export const addBalance: RequestHandler = async (request: Request, response: Res
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { asset, amount } = validateData.data;
+    const { assetId, amount } = validateData.data;
 
     const res = await nats.request<OnRampReturnPayload, OnRampPayload>(
-        EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, asset, amount }
+        EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, assetId, amount }
     );
 
     if (!res.success) throw new ApiError(400, res.message);

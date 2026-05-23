@@ -1,29 +1,25 @@
 import z from "zod";
 
-export const GetMarketsClientSchema = z.object({
-    userId: z.string()
-});
-
 export const GetMarketByIdClientSchema = z.object({
-    userId: z.string(),
     marketId: z.string()
 });
 
 export const AddMarketAssetClientSchema = z.object({
     userId: z.string(),
-    asset: z.string(),
+    asset: z.object({
+        symbol: z.string(),
+        precision: z.number()
+    }),
     assetSide: z.enum(["base", "quote"])
 });
 
 export const AddMarketClientSchema = z.object({
     userId: z.string(),
     market: z.object({
-        id: z.string(),
         name: z.string(),
-        baseAsset: z.string(),
-        quoteAsset: z.string(),
+        baseAssetId: z.string(),
+        quoteAssetId: z.string(),
         maxLeverage: z.number(),
-        precision: z.number(),
         minQty: z.number(),
         tickSize: z.number(),
         lotSize: z.number(),
@@ -31,13 +27,15 @@ export const AddMarketClientSchema = z.object({
     })
 });
 
+
+
 export const UpdateMarketClientSchema = z.object({
     userId: z.string(),
     marketId: z.string(),
     market: z.object({
         name: z.string().optional(),
-        baseAsset: z.string().optional(),
-        quoteAsset: z.string().optional(),
+        baseAssetId: z.string().optional(),
+        quoteAssetId: z.string().optional(),
         maxLeverage: z.number().optional(),
         precision: z.number().optional(),
         minQty: z.number().optional(),

@@ -1,26 +1,32 @@
-import { BalancesType, BaseReturnPayload, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, MarketId, MarketsType, MarketType, EVENT_TO_ENGINE_SUBJECT, IncomingEventTypes, OnRampPayload, OnRampReturnPayload, OrderId, PayloadToBackendType, PayloadToEngineType, OrderBookType, PositionsType, OrderList, OrderNode, UserId, GetMarketByIdPayload, GetMarketByIdReturnPayload, AddMarketPayload, GetMarketsPayload, GetMarketsReturnPayload, UpdateMarketPayload, UpdateMarketReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, AddUserPayload, BaseReturnPayloadWithUser, AddMarketAssetPayload } from "@workspace/types";
+import { AddMarketAssetPayload, AddMarketPayload, AddUserPayload, Asset, BalancesType, BaseReturnPayload, BaseReturnPayloadWithUser, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, EngineSnapshot, EVENT_TO_ENGINE_SUBJECT, GetAssetsReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, IncomingEventTypes, InMarketFillType, InMarketOrderType, Market, MarketId, MarketsType, MarketType, OnRampPayload, OnRampReturnPayload, OrderId, OrderStatus, PayloadToBackendType, PayloadToEngineType, PositionsType, UpdateMarketPayload, UpdateMarketReturnPayload, UserPositionType } from "@workspace/types";
 import { OMSEngine } from "./oms-engine";
-import createRBTree from "functional-red-black-tree";
 import { BalanceEngine } from "./balance-engine";
 import { RejectError } from "../utils/error";
-import { OrderBook } from "./matching-engine";
+import { MatchingEngine } from "./matching-engine";
 import { Position } from "./position-engine";
 import { normalizeOrderReturn } from "../utils/parse-incoming";
 import { MarketEngine } from "./market-engine";
+import { SingleMarketOrderBook } from "./single-orderbook";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
+// Data Store for the engine.
 export class EngineState {
 
     balances: BalancesType = new Map();
 
-    orderbooks: OrderBookType = new Map();
+    orderbooks: Map<MarketId, SingleMarketOrderBook> = new Map();
 
     positions: PositionsType = new Map();
 
     markets: MarketsType = new Map();
 
     orderMap: Map<OrderId, MarketId> = new Map();
-}
 
+    orders: Map<OrderId, InMarketOrderType> = new Map();
+
+    assets: Map<string, Asset> = new Map();
+}
 
 export class Engine {
     eventSequenceId: number;
@@ -31,35 +37,41 @@ export class Engine {
 
     private readonly balanceEngine: BalanceEngine;
 
-    private readonly orderEngine: OrderBook;
+    private readonly matchingEngine: MatchingEngine;
 
     private readonly positionEngine: Position;
 
     private readonly marketEngine: MarketEngine;
 
-    constructor() {
+    private readonly snapshotPath: string;
+
+    constructor(snapshotPath = process.env.ENGINE_SNAPSHOT_PATH || join(process.cwd(), "snapshots", "core-engine.snapshot.txt")) {
 
         this.eventSequenceId = 0;
 
         this.state = new EngineState();
 
+        this.snapshotPath = snapshotPath;
 
         this.omsChecker = new OMSEngine(this.state);
 
         this.balanceEngine = new BalanceEngine(this.state);
 
-        this.orderEngine = new OrderBook(this.state);
+        this.matchingEngine = new MatchingEngine(this.state);
 
         this.positionEngine = new Position(this.state);
 
         this.marketEngine = new MarketEngine(this.state);
 
-        this.marketEngine.initializeMarkets();
+        if (!this.loadSnapshot()) {
+            this.marketEngine.initializeMarkets();
+        }
     }
 
-    process = async (subject: IncomingEventTypes, data: PayloadToEngineType): Promise<PayloadToBackendType> => {
-
+    process = async (subject: IncomingEventTypes, data?: PayloadToEngineType): Promise<PayloadToBackendType> => {
         try {
+            let result: PayloadToBackendType;
+
             switch (subject) {
 
                 case EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK:
@@ -72,10 +84,12 @@ export class Engine {
                     };
 
                 case EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE:
-                    return this.createOrder(data as CreateOrderPayload);
+                    result = this.createOrder(data as CreateOrderPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL:
-                    return this.cancelOrder(data as CancelOrderPayload);
+                    result = this.cancelOrder(data as CancelOrderPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS:
                     return this.getOpenOrders(data as GetUserOpenOrdersPayload);
@@ -87,35 +101,50 @@ export class Engine {
                     return this.getBalance(data as GetUserBalancesPayload);
 
                 case EVENT_TO_ENGINE_SUBJECT.ON_RAMP:
-                    return this.onRamp(data as OnRampPayload);
+                    result = this.onRamp(data as OnRampPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.DEPTH_GET:
                     return this.getMarketDepth(data as GetDepthPayload);
 
                 case EVENT_TO_ENGINE_SUBJECT.USER_ADD:
-                    return this.userAdd(data as AddUserPayload);
+                    result = this.userAdd(data as AddUserPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL:
-                    return this.getAllMarkets(data as GetMarketsPayload);
+                    return this.getAllMarkets();
+
+                case EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET:
+                    return this.getAllAssets();
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_GET:
                     return this.getMarketById(data as GetMarketByIdPayload);
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_ADD:
-                    return this.addMarket(data as AddMarketPayload);
+                    result = this.addMarket(data as AddMarketPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE:
-                    return this.updateMarket(data as UpdateMarketPayload);
+                    result = this.updateMarket(data as UpdateMarketPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE:
-                    return this.deleteMarket(data as DeleteMarketPayload);
+                    result = this.deleteMarket(data as DeleteMarketPayload);
+                    break;
 
                 case EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET:
-                    return this.addMarketAsset(data as AddMarketAssetPayload);
+                    result = this.addMarketAsset(data as AddMarketAssetPayload);
+                    break;
 
                 default:
                     return this.internalError("Invalid subject");
             }
+
+            if (result.success) {
+                this.saveSnapshot();
+            }
+
+            return result;
 
         } catch (error) {
 
@@ -128,15 +157,17 @@ export class Engine {
     }
 
     private createOrder = (payload: CreateOrderPayload): CreateOrderReturnPayload => {
+        let locked = false;
+        let parsedOrder: ReturnType<OMSEngine["createOrderChecks"]> | undefined;
 
         try {
 
-            const parsedOrder = this.omsChecker.createOrderChecks(payload);
+            parsedOrder = this.omsChecker.createOrderChecks(payload);
 
             this.balanceEngine.lockBalance(parsedOrder);
+            locked = true;
 
-            const result = this.orderEngine.createOrder(parsedOrder);
-
+            const result = this.matchingEngine.createOrder(parsedOrder);
 
             for (const fill of result.fills) {
 
@@ -156,18 +187,17 @@ export class Engine {
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 data: {
-                    order: normalizeOrderReturn(result),
-                    orderId: result.orderId,
-                    status: result.status,
-                    averagePrice: (result.averagePrice).toString(),
-                    executedQty: (result.filled).toString(),
-                    remainingQty: (result.remainingQty).toString(),
-                    fills: result.fills,
-                    depths: result.depths,
+                    order: normalizeOrderReturn(result, this.state.markets.get(result.marketId)),
                 },
             };
 
         } catch (error) {
+
+            if (locked) {
+                if (parsedOrder) {
+                    this.balanceEngine.releaseBalance(parsedOrder);
+                }
+            }
 
             if (error instanceof RejectError) {
 
@@ -193,11 +223,7 @@ export class Engine {
 
             this.omsChecker.cancelOrderChecks(payload);
 
-            const order = this.orderEngine.cancelOrder(payload);
-
-            /* =============================================
-               RELEASE LOCKED BALANCE
-            ============================================= */
+            const order = this.matchingEngine.cancelOrder(payload);
 
             this.balanceEngine.releaseOrderMargin(order);
 
@@ -207,7 +233,7 @@ export class Engine {
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 message: "Order canceled successfully",
-                data: { order: normalizeOrderReturn(order) },
+                data: { order: normalizeOrderReturn(order, this.state.markets.get(order.marketId)) },
             };
 
         } catch (error) {
@@ -306,7 +332,7 @@ export class Engine {
         try {
             this.omsChecker.getOrderByIdCheck(payload);
 
-            const order = this.orderEngine.getUserOrders(payload);
+            const order = this.matchingEngine.getUserOrderByID(payload);
 
             return {
                 success: true,
@@ -314,7 +340,7 @@ export class Engine {
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 message: "Order fetched",
-                data: { order: normalizeOrderReturn(order) },
+                data: { order: normalizeOrderReturn(order, this.state.markets.get(order.marketId)) },
             };
 
         } catch (error) {
@@ -342,7 +368,7 @@ export class Engine {
         try {
             this.omsChecker.getOpenOrderChecks(payload);
 
-            const orders = this.orderEngine.getUserOpenOrders(payload);
+            const orders = this.matchingEngine.getUserOpenOrders(payload);
 
             return {
                 success: true,
@@ -350,7 +376,7 @@ export class Engine {
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 message: "Open orders fetched",
-                data: { orders: orders.map(normalizeOrderReturn) },
+                data: { orders: orders.map((order) => normalizeOrderReturn(order, this.state.markets.get(order.marketId))) },
             };
 
         } catch (error) {
@@ -378,7 +404,7 @@ export class Engine {
         try {
             this.omsChecker.getDepthMarketCheck(payload);
 
-            const data = this.orderEngine.getMarketDepth(payload);
+            const data = this.matchingEngine.getMarketDepth(payload);
 
             return {
                 success: true,
@@ -428,7 +454,6 @@ export class Engine {
 
             return {
                 success: true,
-                userId: payload.userId,
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 message: "Market fetched",
@@ -439,7 +464,6 @@ export class Engine {
             if (error instanceof RejectError) {
                 return {
                     success: false,
-                    userId: payload.userId,
                     eventId: this.getUpdatedEventId(),
                     timestamp: Date.now(),
                     message: error.message,
@@ -456,26 +480,6 @@ export class Engine {
         try {
             this.omsChecker.addMarketCheck(payload);
             this.marketEngine.addMarket(payload.market);
-
-            this.state.positions.set(
-                payload.market.id,
-                new Map()
-            );
-
-            this.state.orderbooks.set(payload.market.id, {
-                market: payload.market.id,
-                tickSize: 1,
-                lotSize: 1,
-                bids: new Map<bigint, OrderList>(),
-                asks: new Map<bigint, OrderList>(),
-                bidTree: createRBTree<bigint, boolean>(),
-                askTree: createRBTree<bigint, boolean>(),
-                orderMap: new Map<OrderId, OrderNode>(),
-                userOrders: new Map<UserId, Set<OrderId>>(),
-                lastTradePrice: 0n,
-                indexPrice: 0n,
-            });
-
 
             return {
                 success: true,
@@ -502,12 +506,11 @@ export class Engine {
         }
     };
 
-    private getAllMarkets = (payload: GetMarketsPayload): GetMarketsReturnPayload => {
+    private getAllMarkets = (): GetMarketsReturnPayload => {
         try {
             const markets = this.marketEngine.getMarkets();
             return {
                 success: true,
-                userId: payload.userId,
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
                 message: "Markets fetched",
@@ -518,7 +521,6 @@ export class Engine {
             if (error instanceof RejectError) {
                 return {
                     success: false,
-                    userId: payload.userId,
                     eventId: this.getUpdatedEventId(),
                     timestamp: Date.now(),
                     message: error.message,
@@ -531,24 +533,21 @@ export class Engine {
         }
     };
 
-    private updateMarket = (payload: UpdateMarketPayload): UpdateMarketReturnPayload => {
+    private getAllAssets = (): GetAssetsReturnPayload => {
         try {
-            this.omsChecker.updateMarketCheck(payload);
-            const market = this.marketEngine.updateMarket(payload.marketId, payload.market);
+            const assets = this.marketEngine.getAssets();
             return {
                 success: true,
-                userId: payload.userId,
                 eventId: this.getUpdatedEventId(),
                 timestamp: Date.now(),
-                message: "Market updated successfully",
-                data: { market },
+                message: "Markets fetched",
+                data: { assets },
             };
         } catch (error) {
 
             if (error instanceof RejectError) {
                 return {
                     success: false,
-                    userId: payload.userId,
                     eventId: this.getUpdatedEventId(),
                     timestamp: Date.now(),
                     message: error.message,
@@ -557,36 +556,7 @@ export class Engine {
             }
 
             console.error(error);
-            return this.internalError("Update market failed") as UpdateMarketReturnPayload;
-        }
-    };
-
-    private deleteMarket = (payload: DeleteMarketPayload): DeleteMarketReturnPayload => {
-        try {
-            this.omsChecker.deleteMarketCheck(payload);
-            this.marketEngine.deleteMarket(payload.marketId);
-            return {
-                success: true,
-                userId: payload.userId,
-                eventId: this.getUpdatedEventId(),
-                timestamp: Date.now(),
-                message: "Market deleted successfully",
-            };
-        } catch (error) {
-
-            if (error instanceof RejectError) {
-                return {
-                    success: false,
-                    userId: payload.userId,
-                    eventId: this.getUpdatedEventId(),
-                    timestamp: Date.now(),
-                    message: error.message,
-                    code: error.code,
-                };
-            }
-
-            console.error(error);
-            return this.internalError("Delete market failed") as DeleteMarketReturnPayload;
+            return this.internalError("Get markets failed") as GetAssetsReturnPayload;
         }
     };
 
@@ -651,5 +621,194 @@ export class Engine {
             return this.internalError("Add market asset failed") as BaseReturnPayloadWithUser;
         }
     };
+
+    private updateMarket = (payload: UpdateMarketPayload): UpdateMarketReturnPayload => {
+        try {
+            this.omsChecker.updateMarketCheck(payload);
+            const market = this.marketEngine.updateMarket(payload.marketId, payload.market);
+
+            return {
+                success: true,
+                userId: payload.userId,
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Market updated successfully",
+                data: { market },
+            };
+        } catch (error) {
+            if (error instanceof RejectError) {
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
+            }
+
+            console.error(error);
+            return this.internalError("Update market failed") as UpdateMarketReturnPayload;
+        }
+    };
+
+    private deleteMarket = (payload: DeleteMarketPayload): DeleteMarketReturnPayload => {
+        try {
+            this.omsChecker.deleteMarketCheck(payload);
+            this.marketEngine.deleteMarket(payload.marketId);
+
+            return {
+                success: true,
+                userId: payload.userId,
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Market deleted successfully",
+                data: { marketId: payload.marketId },
+            };
+        } catch (error) {
+            if (error instanceof RejectError) {
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
+            }
+
+            console.error(error);
+            return this.internalError("Delete market failed") as DeleteMarketReturnPayload;
+        }
+    };
+
+    private saveSnapshot() {
+        const snapshot: EngineSnapshot = {
+            eventSequenceId: this.eventSequenceId,
+            balances: Array.from(this.state.balances.entries()).map(([userId, balances]) => [
+                userId,
+                Array.from(balances.entries()).map(([asset, balance]) => [
+                    asset,
+                    { total: balance.total.toString(), locked: balance.locked.toString() },
+                ]),
+            ]),
+            markets: Array.from(this.state.markets.entries()),
+            positions: Array.from(this.state.positions.entries()).map(([marketId, positions]) => [
+                marketId,
+                Array.from(positions.entries()).map(([userId, position]) => [
+                    userId,
+                    this.stringifyBigInts({ ...position }),
+                ]),
+            ]),
+            orders: Array.from(this.state.orders.entries()).map(([orderId, order]) => [
+                orderId,
+                this.stringifyBigInts({ ...order, fills: order.fills.map((fill) => this.stringifyBigInts({ ...fill })) }),
+            ]),
+            assets: Array.from(this.state.assets.entries()),
+        };
+
+        mkdirSync(dirname(this.snapshotPath), { recursive: true });
+        writeFileSync(this.snapshotPath, JSON.stringify(snapshot, null, 2));
+    }
+
+    private loadSnapshot() {
+        if (!existsSync(this.snapshotPath)) {
+            return false;
+        }
+
+        const snapshot = JSON.parse(readFileSync(this.snapshotPath, "utf8")) as EngineSnapshot;
+
+        this.eventSequenceId = snapshot.eventSequenceId || 0;
+        this.state.markets = new Map(snapshot.markets);
+        this.state.assets = new Map(snapshot.assets);
+        this.state.balances = new Map(snapshot.balances.map(([userId, balances]) => [
+            userId,
+            new Map(balances.map(([asset, balance]) => [
+                asset,
+                { total: BigInt(balance.total), locked: BigInt(balance.locked) },
+            ])),
+        ]));
+        this.state.positions = new Map(snapshot.positions.map(([marketId, positions]) => [
+            marketId,
+            new Map(positions.map(([userId, position]) => [userId, this.parsePosition(position)])),
+        ]));
+        this.state.orders = new Map(snapshot.orders.map(([orderId, order]) => [
+            orderId,
+            this.parseOrder(order),
+        ]));
+        this.state.orderbooks = new Map();
+        this.state.orderMap = new Map();
+
+        for (const market of this.state.markets.values()) {
+            this.state.orderbooks.set(market.id, new SingleMarketOrderBook(market, this.state.orderMap));
+            if (!this.state.positions.has(market.id)) {
+                this.state.positions.set(market.id, new Map());
+            }
+        }
+
+        const openOrders = Array.from(this.state.orders.values())
+            .filter((order) => (order.status === OrderStatus.OPEN || order.status === OrderStatus.PARTIAL) && order.remainingQty > 0n)
+            .sort((a, b) => a.createdAt - b.createdAt);
+
+        for (const order of openOrders) {
+            const orderbook = this.state.orderbooks.get(order.marketId);
+            orderbook?.restoreOrder(order);
+        }
+
+        return true;
+    }
+
+    private stringifyBigInts<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, entry]) => [
+                key,
+                typeof entry === "bigint" ? entry.toString() : entry,
+            ])
+        );
+    }
+
+    private parseOrder(order: Record<string, unknown>): InMarketOrderType {
+        const fills = Array.isArray(order.fills) ? order.fills.map((fill) => this.parseFill(fill as Record<string, unknown>)) : [];
+
+        return {
+            ...order,
+            entryPrice: BigInt(order.entryPrice as string),
+            quantity: BigInt(order.quantity as string),
+            margin: typeof order.margin === "string" ? BigInt(order.margin) : undefined,
+            filled: BigInt(order.filled as string),
+            remainingQty: BigInt(order.remainingQty as string),
+            averagePrice: BigInt(order.averagePrice as string),
+            fills,
+        } as InMarketOrderType;
+    }
+
+    private parseFill(fill: Record<string, unknown>): InMarketFillType {
+        return {
+            ...fill,
+            price: BigInt(fill.price as string),
+            qty: BigInt(fill.qty as string),
+            tradeId: BigInt(fill.tradeId as string),
+        } as InMarketFillType;
+    }
+
+    private parsePosition(position: Record<string, unknown>): UserPositionType {
+        return {
+            ...position,
+            margin: this.requiredBigInt(position.margin),
+            averagePrice: this.requiredBigInt(position.averagePrice),
+            quantity: this.requiredBigInt(position.quantity),
+            liquidationPrice: this.requiredBigInt(position.liquidationPrice),
+            entryPrice: this.requiredBigInt(position.entryPrice),
+            upnl: this.requiredBigInt(position.upnl),
+        } as UserPositionType;
+    }
+
+    private requiredBigInt(value: unknown) {
+        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint" && typeof value !== "boolean") {
+            throw new Error("Invalid bigint value in engine snapshot");
+        }
+
+        return BigInt(value);
+    }
 }
 

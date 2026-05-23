@@ -27,8 +27,7 @@ import {
 import { EngineState, } from "./core-engine";
 
 import { RejectError } from "../utils/error";
-import { normalizeOrderIncoming, normalizeOnRampPayload } from "../utils/parse-incoming";
-import { baseAsset, quoteAsset } from "./market-engine";
+import { parseBigInt, perpMargin, quoteNotional, normalizeOrderIncoming, normalizeOnRampPayload } from "../utils/parse-incoming";
 
 export class OMSEngine {
 
@@ -37,9 +36,9 @@ export class OMSEngine {
     // PUBLIC CHECKS
 
     createOrderChecks(order: CreateOrderPayload) {
-        const parsed = normalizeOrderIncoming(order);
+        const market = this.validateMarket(order.marketId);
 
-        const market = this.validateMarket(parsed.marketId);
+        const parsed = normalizeOrderIncoming(order, market);
 
         this.validateBasicOrder(parsed);
 
@@ -57,10 +56,15 @@ export class OMSEngine {
     }
 
     UserBalanceCheck(payload: OnRampPayload): NormalizeOnRampType {
+        const asset = this.state.assets.get(payload.assetId);
 
-        const parsed = normalizeOnRampPayload(payload);
+        if (!asset) {
+            this.reject(EVENT_REJECT_CODES.INVALID_ASSET, "Asset not found")
+        }
 
-        this.validateAsset(parsed.asset);
+        const parsed = normalizeOnRampPayload(payload, asset);
+
+        this.validateAsset(parsed.assetId);
 
         return parsed;
     }
@@ -91,8 +95,8 @@ export class OMSEngine {
         const supported = new Set<string>();
 
         for (const market of this.state.markets.values()) {
-            supported.add(market.baseAsset);
-            supported.add(market.quoteAsset);
+            supported.add(market.baseAsset.id);
+            supported.add(market.quoteAsset.id);
         }
 
         if (!supported.has(asset)) {
@@ -112,7 +116,6 @@ export class OMSEngine {
             if (orderbook.asks.size > 0 || orderbook.bids.size > 0) {
                 this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has open orders");
             }
-
         }
 
         if (this.state.positions.has(payload.marketId)) {
@@ -124,8 +127,8 @@ export class OMSEngine {
 
         if (this.state.balances.size > 0) {
             for (const [userId, balances] of this.state.balances.entries()) {
-                const baseBalance = balances.get(market.baseAsset);
-                const quoteBalance = balances.get(market.quoteAsset);
+                const baseBalance = balances.get(market.baseAsset.id);
+                const quoteBalance = balances.get(market.quoteAsset.id);
                 if ((baseBalance && baseBalance.total > 0n) || (quoteBalance && quoteBalance.total > 0n)) {
                     this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has user balances");
                 }
@@ -146,11 +149,11 @@ export class OMSEngine {
         const supported = new Set<string>();
 
         for (const market of this.state.markets.values()) {
-            supported.add(market.baseAsset);
-            supported.add(market.quoteAsset);
+            supported.add(market.baseAsset.symbol);
+            supported.add(market.quoteAsset.symbol);
         }
 
-        if (supported.has(payload.asset)) {
+        if (supported.has(payload.asset.symbol)) {
             this.reject(EVENT_REJECT_CODES.ASSET_ALREADY_EXISTS, "Asset Already exists in a market");
         }
     }
@@ -163,10 +166,10 @@ export class OMSEngine {
     updateMarketCheck(payload: UpdateMarketPayload) {
         const market = this.validateMarket(payload.marketId);
 
-        if (payload.market.baseAsset && payload.market.baseAsset !== market.baseAsset) {
+        if (payload.market.baseAssetId && payload.market.baseAssetId !== market.baseAsset.id) {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Base asset cannot be changed");
         }
-        if (payload.market.quoteAsset && payload.market.quoteAsset !== market.quoteAsset) {
+        if (payload.market.quoteAssetId && payload.market.quoteAssetId !== market.quoteAsset.id) {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Quote asset cannot be changed");
         }
 
@@ -180,10 +183,6 @@ export class OMSEngine {
 
         if (payload.market.maxLeverage && payload.market.maxLeverage <= 0) {
             this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Max leverage can not be less than or equal to 0");
-        }
-
-        if (payload.market.precision && payload.market.precision <= 0) {
-            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Precision can not be less than or equal to 0");
         }
 
         if (payload.market.minQty && payload.market.minQty <= 0) {
@@ -229,9 +228,9 @@ export class OMSEngine {
 
         //    MARKET ORDERS
 
-        if (order.type === OrderType.MARKET && typeof order.entryPrice !== "undefined") {
+        if (order.type === OrderType.MARKET && typeof order.entryPrice === "undefined") {
 
-            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Market orders cannot have price");
+            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Market orders also have to server price for risk checks");
         }
 
         //    LIMIT ORDERS
@@ -291,26 +290,31 @@ export class OMSEngine {
             }
         }
 
-        if (order.quantity < market.minQty) {
+        const minQty = parseBigInt(market.minQty.toString(), market.baseAsset.precision, EVENT_REJECT_CODES.INVALID_QUANTITY, "min quantity");
+        const lotSize = parseBigInt(market.lotSize.toString(), market.baseAsset.precision, EVENT_REJECT_CODES.INVALID_LOT_SIZE, "lot size");
+        const tickSize = parseBigInt(market.tickSize.toString(), market.quoteAsset.precision, EVENT_REJECT_CODES.INVALID_TICK_SIZE, "tick size");
+        const minNotional = parseBigInt(market.minNotional.toString(), market.quoteAsset.precision, EVENT_REJECT_CODES.INVALID_AMOUNT, "min notional");
+
+        if (order.quantity < minQty) {
 
             return this.reject(EVENT_REJECT_CODES.BELOW_MIN_QTY, "Quantity below minimum");
         }
 
-        if (order.quantity % BigInt(market.lotSize) !== 0n) {
+        if (lotSize <= 0n || order.quantity % lotSize !== 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Invalid lot size");
         }
 
-        if (typeof order.entryPrice !== "undefined" && order.entryPrice % BigInt(market.tickSize) !== 0n) {
+        if (typeof order.entryPrice !== "undefined" && (tickSize <= 0n || order.entryPrice % tickSize !== 0n)) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Invalid tick size");
         }
 
         if (typeof order.entryPrice !== "undefined") {
 
-            const notional = order.entryPrice * order.quantity;
+            const notional = quoteNotional(order.quantity, order.entryPrice, market);
 
-            if (notional < market.minNotional) {
+            if (notional < minNotional) {
 
                 return this.reject(EVENT_REJECT_CODES.BELOW_MIN_NOTIONAL, "Below minimum notional");
             }
@@ -480,19 +484,19 @@ export class OMSEngine {
                     return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Spot limit buy requires price");
                 }
 
-                const quoteBalance = userBalances.get(market.quoteAsset);
+                const quoteBalance = userBalances.get(market.quoteAsset.id);
 
                 if (!quoteBalance) {
 
                     return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Quote asset balance missing");
                 }
 
-                const requiredQuote = order.entryPrice * order.quantity;
+                const requiredQuote = quoteNotional(order.quantity, order.entryPrice, market);
 
                 const availableQuote = this.availableBalance(quoteBalance.total, quoteBalance.locked);
 
-                if (availableQuote < requiredQuote) {
 
+                if (availableQuote < requiredQuote) {
                     return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient quote balance");
                 }
             }
@@ -502,7 +506,7 @@ export class OMSEngine {
 
             if (order.side === OrderSide.SELL) {
 
-                const baseBalance = userBalances.get(market.baseAsset);
+                const baseBalance = userBalances.get(market.baseAsset.id);
 
                 if (!baseBalance) {
 
@@ -526,11 +530,9 @@ export class OMSEngine {
 
         //    PERP MARGIN
 
-        const notional = order.entryPrice * order.quantity;
+        const requiredMargin = perpMargin(order.quantity, order.entryPrice, order.leverage, market);
 
-        const requiredMargin = notional / BigInt(order.leverage);
-
-        const collateralAsset = market.quoteAsset;
+        const collateralAsset = market.quoteAsset.id;
 
         const userBalances = this.state.balances.get(order.userId);
 
@@ -617,6 +619,7 @@ export class OMSEngine {
     private getBestBid(orderbook: any): bigint | null {
 
         const node = orderbook.bidTree.end;
+        node.prev();
 
         return node.valid ? node.key : null;
     }

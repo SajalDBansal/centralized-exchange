@@ -51,21 +51,26 @@ export enum TimeInForce {
     FOK = "Fill_OR_KILL",
 }
 
+export type Asset = {
+    id: string;
+    symbol: string;
+    precision: number;
+}
+
 export interface Market {
     id: MarketId;
     name: string;
-    baseAsset: string;
-    quoteAsset: string;
+    baseAsset: Asset;
+    quoteAsset: Asset;
     maxLeverage: number;
-    precision: number;
-    minQty: number; // convert to bigint for calc
-    tickSize: number; // convert to bigint for calc
-    lotSize: number; // convert to bigint for calc
-    minNotional: number; // convert to bigint for calc
+    minQty: number;
+    tickSize: number;
+    lotSize: number;
+    minNotional: number;
 }
 
 export interface BaseOrderType {
-    entryPrice?: string; // convert to bigint for calc
+    entryPrice: string; // convert to bigint for calc
     quantity: string; // convert to bigint for calc
     userId: string;
     marketId: MarketId;
@@ -77,6 +82,19 @@ export interface BaseOrderType {
     timeInForce: TimeInForce;
     createdAt: number;
 }
+export type InMarketFillType = {
+    price: bigint; // convert to bigint for calc
+    qty: bigint; // convert to bigint for calc
+    tradeId: bigint,
+    takerOrderId: string,
+    takerUserId: string;
+    makerOrderId: string,
+    makerUserId: string,
+    side: OrderSide,
+    marketId: MarketId,
+    status: FillStatus;
+    timestamp: number;
+}
 
 export interface FillType {
     price: string; // convert to bigint for calc
@@ -87,8 +105,9 @@ export interface FillType {
     makerOrderId: string,
     makerUserId: string,
     side: OrderSide,
-    market: Market,
+    marketId: MarketId,
     status: FillStatus;
+    timestamp: number;
 }
 
 export interface DepthType { price: string, quantity: string }// convert to bigint for calc
