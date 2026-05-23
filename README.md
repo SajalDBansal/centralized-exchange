@@ -82,27 +82,42 @@ The project is split into service apps and reusable workspace packages.
 
 The API layer receives user-facing HTTP requests. The trading engine owns the critical exchange state and performs the matching and settlement logic. Shared packages keep event types, validation, transports, database code, and UI components consistent across apps.
 
-```txt
-Client / Frontend
-      |
-      v
-Core Backend API
-      |
-      | NATS request/reply today
-      | Redis Streams planned/scaffolded
-      v
-Core Trading Engine
-      |
-      | in-memory state + snapshots
-      v
-Orderbooks, balances, positions, markets, orders
+```mermaid
+flowchart TB
+    Client["Client / Browser / API Consumer"]
+    Frontend["core-frontend<br/>Next.js Exchange UI"]
+    Docs["docs-frontend<br/>Docs UI"]
+    Backend["core-backend<br/>Express HTTP API"]
+    Auth["Auth Middleware<br/>JWT / Cookies"]
+    Validation["validations package<br/>Zod Schemas"]
+    Types["types package<br/>Shared Event Types"]
+    Nats["NATS<br/>Active Request Reply"]
+    Redis["Redis Streams<br/>Planned Event Pipeline"]
+    Engine["core-trading-engine<br/>In-Memory Matching Engine"]
+    Snapshot["Snapshot File<br/>Engine Restore Point"]
+    DatabaseWorker["database-engine<br/>Planned Persistence Worker"]
+    WsServer["ws-server<br/>Planned Realtime Fanout"]
+    Postgres["PostgreSQL<br/>Prisma Database"]
+    UI["ui package<br/>Shared Components"]
 
-
-
-[Diagram space: add architecture diagram here]
-
-
-
+    Client --> Frontend
+    Client --> Backend
+    Docs --> UI
+    Frontend --> UI
+    Frontend --> Backend
+    Backend --> Auth
+    Backend --> Validation
+    Backend --> Types
+    Backend --> Nats
+    Backend -. planned .-> Redis
+    Nats --> Engine
+    Redis -. planned .-> Engine
+    Engine --> Snapshot
+    Engine --> Types
+    Engine -. planned events .-> DatabaseWorker
+    DatabaseWorker -. writes .-> Postgres
+    Engine -. market and user updates .-> WsServer
+    WsServer -. realtime pushes .-> Client
 ```
 
 ## Main Services
@@ -218,91 +233,99 @@ Important engine modules:
 
 ### Current NATS Flow
 
-```txt
-API / service caller
-      |
-      | request(subject, payload)
-      v
-NATS
-      |
-      | engine.* subscription
-      v
-Core Trading Engine
-      |
-      | Engine.process(subject, payload)
-      v
-Validation -> locking -> matching -> settlement -> response
-      |
-      v
-NATS response
-      |
-      v
-Caller
+```mermaid
+sequenceDiagram
+    participant Caller as API or Service Caller
+    participant NATS as NATS Request Reply
+    participant EngineApp as core-trading-engine
+    participant Core as Engine.process
+    participant OMS as OMS Engine
+    participant Match as Matching Engine
+    participant Settle as Balance or Position Engine
 
-
-
-[Flowchart space: add current NATS request/reply flow here]
-
-
-
+    Caller->>NATS: request(subject, payload)
+    NATS->>EngineApp: deliver engine.* subject
+    EngineApp->>Core: process(subject, payload)
+    Core->>OMS: validate payload and risk
+    OMS-->>Core: normalized order or approved request
+    Core->>Settle: lock funds or margin
+    Core->>Match: match or route order action
+    Match-->>Core: order result and fills
+    Core->>Settle: apply fills and release unused lock
+    Core-->>EngineApp: typed engine response
+    EngineApp-->>NATS: respond(response)
+    NATS-->>Caller: resolve request
 ```
 
 ### Planned Redis Streams Flow
 
-```txt
-Client
-  -> Core Backend Controller
-  -> BackendResponseRouter
-  -> Redis stream: market:event
-  -> Trading engine consumer group: trade-engine-group
-  -> Core Trading Engine
-  -> Redis stream: backend:response:<backendId>
-  -> BackendResponseRouter
-  -> HTTP / WS response
+```mermaid
+flowchart LR
+    Client["Client"]
+    Controller["Core Backend Controller"]
+    Router["BackendResponseRouter"]
+    MarketStream[("Redis Stream<br/>market:event")]
+    TradeGroup{{"Consumer Group<br/>trade-engine-group"}}
+    Engine["Core Trading Engine"]
+    ResponseStream[("Redis Stream<br/>backend:response:{backendId}")]
+    Pending["Pending Request Map<br/>requestId to Promise"]
 
-
-
-[Flowchart space: add Redis Streams flow here]
-
-
-
+    Client --> Controller
+    Controller --> Router
+    Router --> Pending
+    Router -- "XADD MarketEvent" --> MarketStream
+    MarketStream -- "XREADGROUP" --> TradeGroup
+    TradeGroup --> Engine
+    Engine -- "Engine.process" --> Engine
+    Engine -- "XACK market:event" --> MarketStream
+    Engine -- "XADD TradeResultEvent" --> ResponseStream
+    ResponseStream -- "XREAD" --> Router
+    Router --> Pending
+    Router --> Controller
+    Controller --> Client
 ```
 
 ### Order Creation Flow
 
-```txt
-Incoming order payload
-      |
-      v
-Normalize string amounts to bigint
-      |
-      v
-OMS validation and risk checks
-      |
-      v
-Lock required balance or margin
-      |
-      v
-Match against orderbook
-      |
-      v
-Apply fills to spot balances or perp positions
-      |
-      v
-Release unused locked funds
-      |
-      v
-Normalize response for JSON
-      |
-      v
-Save snapshot after successful mutation
+```mermaid
+flowchart TD
+    Start["Incoming ORDER_CREATE Payload"]
+    Normalize["Normalize Incoming Amounts<br/>string -> bigint"]
+    OMS["OMS Checks<br/>market, order, TIF, risk, liquidity"]
+    Valid{"Accepted?"}
+    Lock["Lock Balance or Perp Margin"]
+    Match["Matching Engine<br/>route to market orderbook"]
+    Book["SingleMarketOrderBook<br/>price-time priority"]
+    Fills{"Any fills?"}
+    SpotOrPerp{"Market Type"}
+    Spot["Balance Engine<br/>settle spot fills"]
+    Perp["Position Engine<br/>update perp position"]
+    Release["Release Unused Locked Funds"]
+    Resting{"Remaining Quantity?"}
+    Rest["Keep Resting Order<br/>GTC / partial open"]
+    Done["Normalize Response<br/>bigint -> string"]
+    Snapshot["Save Snapshot"]
+    Reject["Return Reject Response"]
 
-
-
-[Flowchart space: add detailed order lifecycle here]
-
-
-
+    Start --> Normalize
+    Normalize --> OMS
+    OMS --> Valid
+    Valid -- no --> Reject
+    Valid -- yes --> Lock
+    Lock --> Match
+    Match --> Book
+    Book --> Fills
+    Fills -- yes --> SpotOrPerp
+    SpotOrPerp -- spot --> Spot
+    SpotOrPerp -- perp --> Perp
+    Spot --> Release
+    Perp --> Release
+    Fills -- no --> Release
+    Release --> Resting
+    Resting -- yes --> Rest
+    Resting -- no --> Done
+    Rest --> Done
+    Done --> Snapshot
 ```
 
 ## Core Concepts Used
@@ -463,51 +486,228 @@ In progress or placeholder:
 - Add Dockerfiles and compose profiles for running the full exchange stack locally.
 - Build the core frontend trading screen: markets, orderbook, chart area, order form, open orders, balances, and positions.
 
-## Diagram Placeholders
+## Diagrams
 
-Use this section later for full diagrams.
+These diagrams describe the intended system shape. Some pieces, like the database engine, WebSocket server, and Redis Streams runtime path, are scaffolded or planned rather than fully active.
 
 ### System Architecture
 
-```txt
+```mermaid
+flowchart TB
+    subgraph Apps
+        CoreFrontend["core-frontend"]
+        DocsFrontend["docs-frontend"]
+        CoreBackend["core-backend"]
+        TradingEngine["core-trading-engine"]
+        DatabaseEngine["database-engine"]
+        WsServer["ws-server"]
+    end
 
+    subgraph SharedPackages["Workspace Packages"]
+        TypesPkg["@workspace/types"]
+        ValidationPkg["@workspace/validations"]
+        DbPkg["@workspace/database"]
+        RedisPkg["@workspace/redis-streams"]
+        NatsPkg["@workspace/nats-streams"]
+        UiPkg["@workspace/ui"]
+    end
 
+    subgraph Infra["Infrastructure"]
+        Nats["NATS"]
+        Redis["Redis"]
+        Postgres["PostgreSQL"]
+        Snapshot["Engine Snapshot File"]
+    end
 
-
-
-
+    CoreFrontend --> UiPkg
+    DocsFrontend --> UiPkg
+    CoreFrontend --> CoreBackend
+    CoreBackend --> ValidationPkg
+    CoreBackend --> TypesPkg
+    CoreBackend --> NatsPkg
+    CoreBackend --> RedisPkg
+    CoreBackend --> DbPkg
+    NatsPkg --> Nats
+    RedisPkg --> Redis
+    DbPkg --> Postgres
+    CoreBackend --> Nats
+    Nats --> TradingEngine
+    TradingEngine --> TypesPkg
+    TradingEngine --> Snapshot
+    TradingEngine -. planned .-> Redis
+    Redis -. planned .-> DatabaseEngine
+    DatabaseEngine -. planned .-> Postgres
+    Redis -. planned .-> WsServer
+    WsServer -. planned .-> CoreFrontend
 ```
 
 ### Order Matching Flow
 
-```txt
+```mermaid
+flowchart LR
+    Order["New Order"]
+    Side{"Side"}
+    BidBook["Bid Book<br/>buy orders"]
+    AskBook["Ask Book<br/>sell orders"]
+    BestAsk["Best Ask"]
+    BestBid["Best Bid"]
+    CrossBuy{"Buy price >= best ask?"}
+    CrossSell{"Sell price <= best bid?"}
+    Match["Execute Fill<br/>maker + taker"]
+    Update["Update filled and remaining qty"]
+    More{"Can keep matching?"}
+    Rest{"Should rest on book?"}
+    AddBid["Add to Bid Price Level"]
+    AddAsk["Add to Ask Price Level"]
+    Complete["Return order, fills, depth changes"]
 
-
-
-
-
-
+    Order --> Side
+    Side -- buy --> AskBook
+    AskBook --> BestAsk
+    BestAsk --> CrossBuy
+    CrossBuy -- yes --> Match
+    CrossBuy -- no --> Rest
+    Side -- sell --> BidBook
+    BidBook --> BestBid
+    BestBid --> CrossSell
+    CrossSell -- yes --> Match
+    CrossSell -- no --> Rest
+    Match --> Update
+    Update --> More
+    More -- yes --> Side
+    More -- no --> Rest
+    Rest -- buy order remains --> AddBid
+    Rest -- sell order remains --> AddAsk
+    Rest -- no remaining qty or IOC/FOK --> Complete
+    AddBid --> Complete
+    AddAsk --> Complete
 ```
 
 ### Persistence Flow
 
-```txt
+```mermaid
+flowchart TD
+    Engine["Core Trading Engine"]
+    Result["Engine Result<br/>orders, fills, balances, positions"]
+    EventLog[("Event Stream<br/>Redis or NATS JetStream later")]
+    DbWorker["Database Engine / DB Poller"]
+    Mapper["Map Engine Events<br/>to Prisma Models"]
+    Postgres[("PostgreSQL")]
+    Orders["Order Table"]
+    Trades["Trade Table"]
+    Balances["UserAssetBalance Table"]
+    Markets["Market / Asset Tables"]
+    Positions["Future Position Tables"]
+    Audit["Future Audit / Replay Log"]
 
-
-
-
-
-
+    Engine --> Result
+    Result -. planned publish .-> EventLog
+    EventLog -. consume .-> DbWorker
+    DbWorker --> Mapper
+    Mapper --> Postgres
+    Postgres --> Orders
+    Postgres --> Trades
+    Postgres --> Balances
+    Postgres --> Markets
+    Postgres -. next .-> Positions
+    Postgres -. next .-> Audit
 ```
 
 ### WebSocket Realtime Flow
 
-```txt
+```mermaid
+sequenceDiagram
+    participant Engine as Core Trading Engine
+    participant Stream as Event Stream
+    participant WS as ws-server
+    participant Client as Frontend Client
 
-
-
-
-
-
+    Client->>WS: connect and subscribe to markets/user channels
+    Engine->>Stream: publish depth, trade, order, balance, position events
+    WS->>Stream: consume realtime events
+    WS->>WS: filter by marketId, userId, or channel
+    WS-->>Client: push market depth updates
+    WS-->>Client: push trade ticks
+    WS-->>Client: push private order and balance updates
 ```
 
+### Database Model
+
+```mermaid
+erDiagram
+    USER ||--o{ SESSION : has
+    USER ||--o{ USER_ASSET_BALANCE : owns
+    USER ||--o{ USER_ORDER : places
+    ASSET ||--o{ USER_ASSET_BALANCE : tracks
+    ASSET ||--o{ MARKET : base_asset
+    ASSET ||--o{ MARKET : quote_asset
+    MARKET ||--o{ USER_ORDER : contains
+    MARKET ||--o{ TRADE : records
+    USER_ORDER ||--o{ TRADE : maker_order
+    USER_ORDER ||--o{ TRADE : taker_order
+
+    USER {
+        string id PK
+        string username
+        string email
+        boolean isVerified
+        boolean isArchived
+        datetime createdAt
+    }
+
+    SESSION {
+        string id PK
+        string userId FK
+        string refreshTokenHash
+        boolean revoke
+        datetime createdAt
+    }
+
+    ASSET {
+        string id PK
+        string name
+        string symbol
+        int decimalPrecision
+    }
+
+    MARKET {
+        string id PK
+        string name
+        string baseAssetId FK
+        string quoteAssetId FK
+        boolean active
+    }
+
+    USER_ASSET_BALANCE {
+        string id PK
+        string userId FK
+        string assetId FK
+        decimal available
+        decimal locked
+    }
+
+    USER_ORDER {
+        string id PK
+        bigint sequence
+        string userId FK
+        string marketId FK
+        string type
+        string side
+        string status
+        decimal price
+        decimal quantity
+        decimal tradedQuantity
+        decimal remainingQuantity
+    }
+
+    TRADE {
+        string id PK
+        string marketId FK
+        decimal price
+        decimal quantity
+        string makerOrderId FK
+        string takerOrderId FK
+        string makerUserId
+        string takerUserId
+    }
+```
