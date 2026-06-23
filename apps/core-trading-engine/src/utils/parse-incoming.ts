@@ -1,4 +1,4 @@
-import { Asset, BasePerpOrderType, DepthType, FillType, IncomingOrderType, InMarketFillType, InMarketOrderType, Market, MarketType, normalizeIncomingOrderType, NormalizeOnRampType, NormalizeOrderReturnType, OnRampPayload } from "@workspace/types";
+import { Asset, DepthType, FillType, IncomingOrderType, InMarketFillType, InMarketOrderType, Market, MarketType, normalizeIncomingOrderType, NormalizeOnRampType, NormalizeOrderReturnType, OnRampPayload, OrderSide } from "@workspace/types";
 import { EVENT_REJECT_CODES } from "@workspace/types";
 import { RejectError } from "./error";
 
@@ -75,6 +75,10 @@ export function perpMargin(quantity: bigint, price: bigint, leverage: number, ma
     return ceilDiv(quoteNotional(quantity, price, market), BigInt(leverage));
 }
 
+export function bufferedPerpMargin(quantity: bigint, price: bigint, leverage: number, market: Market): bigint {
+    return ceilDiv(perpMargin(quantity, price, leverage, market) * 105n, 100n);
+}
+
 export function normalizeOrderIncoming(order: IncomingOrderType, market: Market): normalizeIncomingOrderType {
     return {
         ...order,
@@ -83,10 +87,7 @@ export function normalizeOrderIncoming(order: IncomingOrderType, market: Market)
 
         entryPrice: parseBigInt(order.entryPrice, market.quoteAsset.precision, EVENT_REJECT_CODES.INVALID_PRICE, "price"),
 
-        margin:
-            order.marketType === MarketType.PERP
-                ? parseBigInt((order as BasePerpOrderType).margin, market.quoteAsset.precision, EVENT_REJECT_CODES.INVALID_MARGIN, "margin")
-                : 0n,
+        margin: 0n,
     };
 }
 
@@ -118,6 +119,11 @@ export function normalizeOrderReturn(order: InMarketOrderType, market?: Market):
             filled: formatMaybe(order.filled, basePrecision),
             averagePrice: formatMaybe(order.averagePrice, quotePrecision),
             margin: formatMaybe(order.margin, quotePrecision),
+            marginLedger: {
+                allotted: formatMaybe(order.marginLedger.allotted, quotePrecision),
+                used: formatMaybe(order.marginLedger.used, quotePrecision),
+                released: formatMaybe(order.marginLedger.released, quotePrecision),
+            },
             entryPrice: formatMaybe(order.entryPrice, quotePrecision)
 
         };
@@ -130,6 +136,11 @@ export function normalizeOrderReturn(order: InMarketOrderType, market?: Market):
         fills,
         depths,
         quantity: formatMaybe(order.quantity, basePrecision),
+        balanceLedger: {
+            allotted: formatMaybe(order.balanceLedger.allotted, order.side === OrderSide.BUY ? quotePrecision : basePrecision),
+            used: formatMaybe(order.balanceLedger.used, order.side === OrderSide.BUY ? quotePrecision : basePrecision),
+            released: formatMaybe(order.balanceLedger.released, order.side === OrderSide.BUY ? quotePrecision : basePrecision),
+        },
         remainingQty: formatMaybe(order.remainingQty, basePrecision),
         filled: formatMaybe(order.filled, basePrecision),
         averagePrice: formatMaybe(order.averagePrice, quotePrecision),

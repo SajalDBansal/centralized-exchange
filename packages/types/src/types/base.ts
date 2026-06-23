@@ -24,7 +24,8 @@ export enum OrderSide {
 
 export enum OrderStatus {
     OPEN = "OPEN",
-    PARTIAL = "PARTIAL",
+    PARTIAL_FILLED = "PARTIAL_FILLED",
+    PARTIAL_REJECTED = "PARTIAL_REJECTED",
     FILLED = "FILLED",
     CANCELLED = "CANCELLED",
     REJECTED = "REJECTED"
@@ -69,9 +70,25 @@ export interface Market {
     minNotional: number;
 }
 
+export interface MarketRiskState {
+    indexPrice: bigint;
+    indexUpdatedAt: number;
+    lastFundingRateBps: bigint;
+    lastFundingSettledAt: number;
+}
+
+export interface FundingPayment {
+    marketId: MarketId;
+    userId: UserId;
+    positionId: string;
+    amount: bigint;
+    fundingRateBps: bigint;
+    timestamp: number;
+}
+
 export interface BaseOrderType {
-    entryPrice: string; // convert to bigint for calc
-    quantity: string; // convert to bigint for calc
+    entryPrice: string;
+    quantity: string;
     userId: string;
     marketId: MarketId;
     side: OrderSide;
@@ -83,8 +100,8 @@ export interface BaseOrderType {
     createdAt: number;
 }
 export type InMarketFillType = {
-    price: bigint; // convert to bigint for calc
-    qty: bigint; // convert to bigint for calc
+    price: bigint;
+    qty: bigint;
     tradeId: bigint,
     takerOrderId: string,
     takerUserId: string;
@@ -97,8 +114,8 @@ export type InMarketFillType = {
 }
 
 export interface FillType {
-    price: string; // convert to bigint for calc
-    qty: string; // convert to bigint for calc
+    price: string;
+    qty: string;
     tradeId: string,
     takerOrderId: string,
     takerUserId: string;
@@ -110,11 +127,11 @@ export interface FillType {
     timestamp: number;
 }
 
-export interface DepthType { price: string, quantity: string }// convert to bigint for calc
+export interface DepthType { price: string, quantity: string }
 
 export interface BalanceEntry {
-    total: string; // convert to bigint for calc
-    locked: string; // convert to bigint for calc
+    total: string;
+    locked: string;
 }
 
 export type ReturnBalanceType = Partial<

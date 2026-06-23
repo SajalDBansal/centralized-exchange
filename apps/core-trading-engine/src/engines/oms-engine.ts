@@ -42,6 +42,10 @@ export class OMSEngine {
 
         this.validateBasicOrder(parsed);
 
+        if (parsed.marketType === MarketType.PERP) {
+            parsed.margin = perpMargin(parsed.quantity, parsed.entryPrice, parsed.leverage, market);
+        }
+
         this.validateTIF(parsed);
 
         this.validateMarketConstraints(parsed, market);
@@ -226,21 +230,7 @@ export class OMSEngine {
             return this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Quantity must be positive");
         }
 
-        //    MARKET ORDERS
-
-        if (order.type === OrderType.MARKET && typeof order.entryPrice === "undefined") {
-
-            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Market orders also have to server price for risk checks");
-        }
-
-        //    LIMIT ORDERS
-
-        if (order.type === OrderType.LIMIT && typeof order.entryPrice === "undefined") {
-
-            return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Limit order requires price");
-        }
-
-        if (typeof order.entryPrice !== "undefined" && order.entryPrice <= 0n) {
+        if (order.entryPrice <= 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Price must be positive");
         }
@@ -257,6 +247,12 @@ export class OMSEngine {
             if (order.leverage <= 0) {
 
                 return this.reject(EVENT_REJECT_CODES.INVALID_LEVERAGE, "Invalid leverage");
+            }
+
+            const expectedSide = order.position === OrderPosition.LONG ? OrderSide.BUY : OrderSide.SELL;
+
+            if (order.side !== expectedSide) {
+                return this.reject(EVENT_REJECT_CODES.INVALID_POSITION, "Perp side does not match position direction");
             }
         }
 
@@ -305,19 +301,16 @@ export class OMSEngine {
             return this.reject(EVENT_REJECT_CODES.INVALID_LOT_SIZE, "Invalid lot size");
         }
 
-        if (typeof order.entryPrice !== "undefined" && (tickSize <= 0n || order.entryPrice % tickSize !== 0n)) {
+        if (tickSize <= 0n || order.entryPrice % tickSize !== 0n) {
 
             return this.reject(EVENT_REJECT_CODES.INVALID_TICK_SIZE, "Invalid tick size");
         }
 
-        if (typeof order.entryPrice !== "undefined") {
+        const notional = quoteNotional(order.quantity, order.entryPrice, market);
 
-            const notional = quoteNotional(order.quantity, order.entryPrice, market);
+        if (notional < minNotional) {
 
-            if (notional < minNotional) {
-
-                return this.reject(EVENT_REJECT_CODES.BELOW_MIN_NOTIONAL, "Below minimum notional");
-            }
+            return this.reject(EVENT_REJECT_CODES.BELOW_MIN_NOTIONAL, "Below minimum notional");
         }
     }
 
@@ -355,6 +348,14 @@ export class OMSEngine {
 
             return this.reject(EVENT_REJECT_CODES.REDUCE_ONLY_INVALID, "Reduce only order increases exposure");
         }
+
+        if (order.reduceOnly && order.quantity > position.quantity) {
+            return this.reject(EVENT_REJECT_CODES.REDUCE_ONLY_INVALID, "Reduce only order exceeds open position");
+        }
+
+        if (order.reduceOnly && order.type === OrderType.LIMIT && order.timeInForce === TimeInForce.GTC) {
+            return this.reject(EVENT_REJECT_CODES.REDUCE_ONLY_INVALID, "Reduce only orders cannot rest");
+        }
     }
 
     //    ORDERBOOK RULES
@@ -385,12 +386,12 @@ export class OMSEngine {
 
             const bestBid = this.getBestBid(orderbook);
 
-            if (order.side === OrderSide.BUY && bestAsk !== null && order.entryPrice! >= bestAsk) {
+            if (order.side === OrderSide.BUY && bestAsk !== null && order.entryPrice >= bestAsk) {
 
                 return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
 
-            if (order.side === OrderSide.SELL && bestBid !== null && order.entryPrice! <= bestBid) {
+            if (order.side === OrderSide.SELL && bestBid !== null && order.entryPrice <= bestBid) {
 
                 return this.reject(EVENT_REJECT_CODES.POST_ONLY_WOULD_TRADE, "Post only order would execute immediately");
             }
@@ -419,8 +420,8 @@ export class OMSEngine {
             const resting = node.order;
 
             const crosses = order.side === OrderSide.BUY
-                ? order.entryPrice! >= resting.entryPrice!
-                : order.entryPrice! <= resting.entryPrice!;
+                ? order.entryPrice >= resting.entryPrice
+                : order.entryPrice <= resting.entryPrice;
 
             if (crosses && resting.side !== order.side) {
 
@@ -479,11 +480,6 @@ export class OMSEngine {
 
             if (order.side === OrderSide.BUY) {
 
-                if (typeof order.entryPrice === "undefined") {
-
-                    return this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Spot limit buy requires price");
-                }
-
                 const quoteBalance = userBalances.get(market.quoteAsset.id);
 
                 if (!quoteBalance) {
@@ -491,14 +487,7 @@ export class OMSEngine {
                     return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Quote asset balance missing");
                 }
 
-                const requiredQuote = quoteNotional(order.quantity, order.entryPrice, market);
-
-                const availableQuote = this.availableBalance(quoteBalance.total, quoteBalance.locked);
-
-
-                if (availableQuote < requiredQuote) {
-                    return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient quote balance");
-                }
+                this.availableBalance(quoteBalance.total, quoteBalance.locked);
             }
 
             // SPOT SELL
@@ -524,13 +513,7 @@ export class OMSEngine {
             return;
         }
 
-        if (typeof order.entryPrice === "undefined") {
-            return;
-        }
-
         //    PERP MARGIN
-
-        const requiredMargin = perpMargin(order.quantity, order.entryPrice, order.leverage, market);
 
         const collateralAsset = market.quoteAsset.id;
 
@@ -548,10 +531,7 @@ export class OMSEngine {
             return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_MARGIN, "Collateral balance missing");
         }
 
-        if (this.availableBalance(collateralBalance.total, collateralBalance.locked) < requiredMargin) {
-
-            return this.reject(EVENT_REJECT_CODES.INSUFFICIENT_MARGIN, "Insufficient margin");
-        }
+        this.availableBalance(collateralBalance.total, collateralBalance.locked);
     }
 
     //    LIQUIDITY
@@ -574,7 +554,14 @@ export class OMSEngine {
                 return;
             }
 
-            liquidity += level.totalQty;
+            let current = level.head;
+
+            while (current) {
+                if (current.order.userId !== order.userId) {
+                    liquidity += current.order.quantity - current.order.filled;
+                }
+                current = current.next;
+            }
         }
         );
 
@@ -619,7 +606,6 @@ export class OMSEngine {
     private getBestBid(orderbook: any): bigint | null {
 
         const node = orderbook.bidTree.end;
-        node.prev();
 
         return node.valid ? node.key : null;
     }

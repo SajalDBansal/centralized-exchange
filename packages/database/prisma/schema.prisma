@@ -17,31 +17,78 @@ enum TradeSide {
   SELL
 }
 
-enum SpotOrderType {
+enum MarketType {
+  SPOT
+  PERP
+}
+
+enum OrderType {
   LIMIT
   MARKET
 }
 
+enum OrderPosition {
+  LONG
+  SHORT
+}
+
 enum OrderStatus {
   OPEN
-  PARTIAL
+  PARTIAL_FILLED
+  PARTIAL_REJECTED
   FILLED
   CANCELLED
   REJECTED
 }
 
+enum FillStatus {
+  TRADE
+  STP
+}
+
+enum STPMode {
+  CANCEL_MAKER
+  CANCEL_TAKER
+  CANCEL_BOTH
+}
+
+enum TimeInForce {
+  GTC
+  IOC
+  FOK
+}
+
+enum AssetTransactionType {
+  ON_RAMP
+  DEPOSIT
+  WITHDRAWAL
+  ADJUSTMENT
+}
+
+enum AssetTransactionStatus {
+  PENDING
+  APPLIED
+  REJECTED
+  CANCELLED
+}
+
 model User {
-  id                String             @id @default(cuid())
-  username          String             @unique
-  email             String             @unique
-  passwordHash      String
-  isVerified        Boolean            @default(false)
-  isArchived        Boolean            @default(false)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  sessions          Session[]
-  userAssetBalances UserAssetBalance[]
-  orders            Order[]
+  id                         String             @id @default(cuid())
+  username                   String             @unique
+  email                      String             @unique
+  passwordHash               String
+  isVerified                 Boolean            @default(false)
+  isArchived                 Boolean            @default(false)
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+  sessions                   Session[]
+  orders                     Order[]
+  makerTrades                Trade[]            @relation("MakerUserTrades")
+  takerTrades                Trade[]            @relation("TakerUserTrades")
+  assetTransactions          AssetTransaction[]
+  fundingPayments            FundingPayment[]
+  paidLiquidationAttempts    LiquidationEvent[] @relation("LiquidatedUserEvents")
+  initiatedLiquidationEvents LiquidationEvent[] @relation("LiquidatorUserEvents")
 }
 
 model Session {
@@ -58,93 +105,194 @@ model Session {
 }
 
 model Market {
-  id             String   @id
-  name           String   @unique
-  baseAssetId    String
-  quoteAssetId   String
-  baseAsset      Asset    @relation("BaseAsset", fields: [baseAssetId], references: [id])
-  quoteAsset     Asset    @relation("QuoteAsset", fields: [quoteAssetId], references: [id])
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  active         Boolean  @default(true)
-  orderHistories Order[]
-  Trades         Trade[]
+  id                 String              @id
+  name               String              @unique
+  marketType         MarketType          @default(SPOT)
+  baseAssetId        String
+  quoteAssetId       String
+  baseAsset          Asset               @relation("BaseAsset", fields: [baseAssetId], references: [id])
+  quoteAsset         Asset               @relation("QuoteAsset", fields: [quoteAssetId], references: [id])
+  maxLeverage        Int                 @default(1)
+  minQty             String
+  tickSize           String
+  lotSize            String
+  minNotional        String
+  active             Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  orders             Order[]
+  trades             Trade[]
+  fundingSettlements FundingSettlement[]
+  fundingPayments    FundingPayment[]
+  liquidationEvents  LiquidationEvent[]
 
-  @@unique([baseAssetId, quoteAssetId])
+  @@unique([baseAssetId, quoteAssetId, marketType])
   @@index([name])
+  @@index([marketType, active])
 }
 
 model Asset {
   id                String             @id @default(cuid())
-  name              String             @unique
+  name              String?
   symbol            String             @unique
-  logo              String
-  decimalPrecision  Int
+  logo              String?
+  precision         Int
+  active            Boolean            @default(true)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   baseMarkets       Market[]           @relation("BaseAsset")
   quoteMarkets      Market[]           @relation("QuoteAsset")
-  userAssetBalances UserAssetBalance[]
+  assetTransactions AssetTransaction[]
 
   @@index([symbol])
 }
 
-model UserAssetBalance {
-  id        String   @id @default(cuid())
-  userId    String
-  assetId   String
-  available Decimal  @default(0) @db.Decimal(36, 18)
-  locked    Decimal  @default(0) @db.Decimal(36, 18)
-  user      User     @relation(fields: [userId], references: [id])
-  asset     Asset    @relation(fields: [assetId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, assetId], name: "user_asset_balance")
-  @@index([userId])
-}
-
 model Order {
-  id                String        @id @default(cuid())
-  sequence          BigInt        @unique @default(autoincrement()) //for debugging
+  id                String             @id @default(cuid())
+  sequence          BigInt             @unique @default(autoincrement())
   userId            String
   marketId          String
-  type              SpotOrderType
+  marketType        MarketType
+  type              OrderType
   side              TradeSide
+  position          OrderPosition?
   status            OrderStatus
-  price             Decimal       @db.Decimal(36, 18)
-  quantity          Decimal       @db.Decimal(36, 18)
-  tradedQuantity    Decimal       @default(0) @db.Decimal(36, 18)
-  remainingQuantity Decimal       @db.Decimal(36, 18)
-  isCancelled       Boolean       @default(false)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  entryPrice        String
+  quantity          String
+  filledQuantity    String             @default("0")
+  remainingQuantity String
+  averagePrice      String             @default("0")
+  postOnly          Boolean            @default(false)
+  reduceOnly        Boolean            @default(false)
+  liquidation       Boolean            @default(false)
+  leverage          Int?
+  margin            String?
+  stpMode           STPMode            @default(CANCEL_TAKER)
+  timeInForce       TimeInForce        @default(GTC)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
   cancelledAt       DateTime?
-  TradeedAt         DateTime?
-  user              User          @relation(fields: [userId], references: [id])
-  market            Market        @relation(fields: [marketId], references: [id])
-  makerTrades       Trade[]       @relation("MakerOrderTrades")
-  takerTrades       Trade[]       @relation("TakerOrderTrades")
+  filledAt          DateTime?
+  user              User               @relation(fields: [userId], references: [id])
+  market            Market             @relation(fields: [marketId], references: [id])
+  makerTrades       Trade[]            @relation("MakerOrderTrades")
+  takerTrades       Trade[]            @relation("TakerOrderTrades")
+  liquidationEvents LiquidationEvent[]
 
   @@index([marketId])
   @@index([userId])
+  @@index([userId, marketId])
+  @@index([status, marketId])
+  @@index([createdAt])
 }
 
 model Trade {
-  id           String   @id @default(cuid())
-  marketId     String
-  price        Decimal  @db.Decimal(36, 18)
-  quantity     Decimal  @db.Decimal(36, 18)
-  makerOrderId String
-  takerOrderId String
-  makerUserId  String
-  takerUserId  String
-  makerfee     Decimal  @db.Decimal(36, 18)
-  takerfee     Decimal  @db.Decimal(36, 18)
-  makerOrder   Order    @relation("MakerOrderTrades", fields: [makerOrderId], references: [id])
-  takerOrder   Order    @relation("TakerOrderTrades", fields: [takerOrderId], references: [id])
-  market       Market   @relation(fields: [marketId], references: [id])
-  createdAt    DateTime @default(now())
+  id            String     @id @default(cuid())
+  engineTradeId BigInt?
+  marketId      String
+  price         String
+  quantity      String
+  side          TradeSide
+  status        FillStatus @default(TRADE)
+  makerOrderId  String
+  takerOrderId  String
+  makerUserId   String
+  takerUserId   String
+  makerFee      String     @default("0")
+  takerFee      String     @default("0")
+  makerOrder    Order      @relation("MakerOrderTrades", fields: [makerOrderId], references: [id])
+  takerOrder    Order      @relation("TakerOrderTrades", fields: [takerOrderId], references: [id])
+  makerUser     User       @relation("MakerUserTrades", fields: [makerUserId], references: [id])
+  takerUser     User       @relation("TakerUserTrades", fields: [takerUserId], references: [id])
+  market        Market     @relation(fields: [marketId], references: [id])
+  createdAt     DateTime   @default(now())
+
+  @@unique([marketId, engineTradeId])
+  @@index([marketId, createdAt])
+  @@index([makerOrderId])
+  @@index([takerOrderId])
+  @@index([makerUserId])
+  @@index([takerUserId])
+}
+
+model AssetTransaction {
+  id          String                 @id @default(cuid())
+  userId      String
+  assetId     String
+  type        AssetTransactionType
+  status      AssetTransactionStatus @default(PENDING)
+  amount      String
+  referenceId String?
+  reason      String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  appliedAt   DateTime?
+  user        User                   @relation(fields: [userId], references: [id])
+  asset       Asset                  @relation(fields: [assetId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([assetId, createdAt])
+  @@index([type, status])
+}
+
+model FundingSettlement {
+  id              String           @id @default(cuid())
+  marketId        String
+  indexPrice      String
+  markPrice       String
+  intervalSeconds Int
+  fundingRateBps  String
+  insuranceUsed   String           @default("0")
+  paymentsCount   Int              @default(0)
+  settledAt       DateTime         @default(now())
+  market          Market           @relation(fields: [marketId], references: [id])
+  payments        FundingPayment[]
+
+  @@index([marketId, settledAt])
+}
+
+model FundingPayment {
+  id                String             @id @default(cuid())
+  settlementId      String?
+  marketId          String
+  userId            String
+  positionId        String
+  amount            String
+  fundingRateBps    String
+  createdAt         DateTime           @default(now())
+  fundingSettlement FundingSettlement? @relation(fields: [settlementId], references: [id])
+  market            Market             @relation(fields: [marketId], references: [id])
+  user              User               @relation(fields: [userId], references: [id])
+
+  @@index([settlementId])
+  @@index([marketId, createdAt])
+  @@index([userId, createdAt])
+  @@index([positionId])
+}
+
+model LiquidationEvent {
+  id                 String   @id @default(cuid())
+  marketId           String
+  liquidatedUserId   String
+  liquidatorUserId   String?
+  liquidationOrderId String?
+  indexPrice         String
+  quantity           String
+  bankruptcyPrice    String?
+  liquidationPrice   String?
+  insuranceUsed      String   @default("0")
+  createdAt          DateTime @default(now())
+  market             Market   @relation(fields: [marketId], references: [id])
+  liquidatedUser     User     @relation("LiquidatedUserEvents", fields: [liquidatedUserId], references: [id])
+  liquidatorUser     User?    @relation("LiquidatorUserEvents", fields: [liquidatorUserId], references: [id])
+  liquidationOrder   Order?   @relation(fields: [liquidationOrderId], references: [id])
 
   @@index([marketId, createdAt])
+  @@index([liquidatedUserId, createdAt])
+  @@index([liquidatorUserId, createdAt])
+  @@index([liquidationOrderId])
 }
+
+// Positions, user balances, and live orderbook levels are intentionally not
+// modeled here. They are runtime trading-engine state and should not be stored
+// as Postgres source-of-truth tables.

@@ -37,7 +37,8 @@ There is also a commented Redis-stream path in `src/index.ts`. That path is inte
 - `src/engines/matching-engine.ts`: thin router from market id to the correct single-market orderbook.
 - `src/engines/single-orderbook.ts`: actual matching engine for one market.
 - `src/engines/balance-engine.ts`: user balance creation, deposits, locking, unlocking, and spot settlement.
-- `src/engines/position-engine.ts`: perp position creation, increase, reduce, close, flip, margin release, and realized PnL.
+- `src/engines/position-engine.ts`: thin router from market id to the correct single-market position store.
+- `src/engines/single-market-positions.ts`: perp position indexes, settlement, margin release, realized PnL, and liquidation-price lookup for one market.
 - `src/engines/market-engine.ts`: market setup, market CRUD, and supported base/quote assets.
 - `src/utils/parse-incoming.ts`: converts string amounts into `bigint` for calculation and converts responses back into strings for JSON.
 
@@ -48,7 +49,7 @@ There is also a commented Redis-stream path in `src/index.ts`. That path is inte
 ```ts
 balances: Map<UserId, Map<Asset, { total: bigint; locked: bigint }>>
 orderbooks: Map<MarketId, SingleMarketOrderBook>
-positions: Map<MarketId, Map<UserId, UserPositionType>>
+positions: Map<MarketId, SingleMarketPositions>
 markets: Map<MarketId, Market>
 orderMap: Map<OrderId, MarketId>
 orders: Map<OrderId, InMarketOrderType>
@@ -58,10 +59,10 @@ Each map has a specific responsibility:
 
 - `balances` stores total and locked balances per user and asset.
 - `orderbooks` stores one `SingleMarketOrderBook` per market.
-- `positions` stores perp positions per market and user.
+- `positions` stores one indexed `SingleMarketPositions` instance per market.
 - `markets` stores market metadata like base asset, quote asset, tick size, lot size, and max leverage.
 - `orderMap` maps active resting order ids to their market id, so cancel/get operations can find the book quickly.
-- `orders` stores all known orders, including filled and cancelled orders. This is important because settlement needs both maker and taker order details even after a maker is removed from the live orderbook.
+- `orders` stores only active resting orders. Matching returns transient maker and taker references for immediate settlement without retaining filled or cancelled orders globally.
 
 ## Event Flow
 
@@ -298,8 +299,8 @@ If maker and taker have the same `userId`, `handleSTP(...)` applies the taker ST
 After matching:
 
 - Fully filled orders become `FILLED`.
-- Market, IOC, and FOK orders with remaining quantity do not rest. They become `PARTIAL` if any fill happened, otherwise `CANCELLED`.
-- Limit GTC orders with remaining quantity rest on the book. They become `OPEN` if no fill happened or `PARTIAL` if some quantity filled.
+- Market, IOC, and FOK orders with remaining quantity do not rest. They become `PARTIAL_FILLED` if any fill happened, otherwise `CANCELLED`.
+- Limit GTC orders with remaining quantity rest on the book. They become `OPEN` if no fill happened or `PARTIAL_FILLED` if some quantity filled.
 
 Resting orders are added to:
 
@@ -309,7 +310,8 @@ Resting orders are added to:
 - global `orderMap`
 - market-local `userOrders`
 
-The global `orders` map keeps the order history.
+The global `orders` map stores the same active resting orders. Terminal orders
+are returned to the caller but are not retained globally.
 
 ### 9. Settlement
 
@@ -318,13 +320,13 @@ After matching, `Engine.createOrder(...)` loops over the returned fills.
 For spot:
 
 ```ts
-balanceEngine.applyFill(fill)
+balanceEngine.applyFill(fill, makerOrder, takerOrder)
 ```
 
 For perps:
 
 ```ts
-positionEngine.applyFill(fill)
+positionEngine.applyFill(fill, makerOrder, takerOrder)
 ```
 
 Then:
@@ -337,7 +339,7 @@ This releases unneeded locked funds for IOC, FOK, market orders, fully filled or
 
 ## Spot Settlement
 
-Spot settlement uses the maker and taker orders from the global `orders` map.
+Spot settlement uses transient maker and taker references returned by matching.
 
 For a buy fill:
 
@@ -370,14 +372,15 @@ Because the engine locks before matching, settlement debits locked balances inst
 
 ## Perp Settlement and Positions
 
-Perp fills go to `Position.applyFill(...)`.
+Perp fills go to the `Position` routing wrapper, which delegates to the
+market's `SingleMarketPositions` instance.
 
 The position engine loads:
 
 - market data
 - maker order
 - taker order
-- market positions map
+- indexed single-market position store
 
 For each fill it applies the fill to both users.
 
@@ -387,7 +390,8 @@ If the user has no position:
 - Position side is taken from the order position if present, otherwise inferred from order side.
 - Average price and entry price are set to the fill price.
 - Margin is `qty * price / leverage`.
-- Liquidation price is a simple leverage-based estimate.
+- Bankruptcy price marks full isolated-margin exhaustion.
+- Liquidation price triggers 10% of the margin-loss distance before bankruptcy.
 
 If the user already has the same position direction:
 
@@ -395,7 +399,7 @@ If the user already has the same position direction:
 - Average price is recalculated by weighted average.
 - Margin increases by fill margin.
 - Leverage is updated from the order.
-- Liquidation price is recalculated.
+- Liquidation and bankruptcy prices are recalculated and reindexed.
 
 If the fill is opposite the current position:
 

@@ -1,5 +1,5 @@
 import { OrderList, OrderNode } from "../orderList";
-import { Asset, Market, MarketId, MarketType, OrderId, OrderPosition, OrderSide, OrderType, STPMode, TimeInForce, UserId } from "./base";
+import { Asset, FundingPayment, Market, MarketId, MarketRiskState, MarketType, OrderId, OrderPosition, OrderSide, OrderType, STPMode, TimeInForce, UserId } from "./base";
 import { Tree } from "functional-red-black-tree";
 import { CreateOrderPayload } from "./nats-types";
 
@@ -30,6 +30,7 @@ export interface UserPositionType {
     averagePrice: bigint;
     quantity: bigint;
     liquidationPrice: bigint;
+    bankruptcyPrice: bigint;
     entryPrice: bigint;
     upnl: bigint;
 }
@@ -92,4 +93,17 @@ export type EngineSnapshot = {
     positions: [string, [string, Record<string, unknown>][]][];
     orders: [string, Record<string, unknown>][];
     assets: [string, Asset][];
+    marketRisk?: [string, {
+        indexPrice: string;
+        indexUpdatedAt: number;
+        lastFundingRateBps: string;
+        lastFundingSettledAt: number;
+    }][];
+    insuranceFunds?: [string, string][];
+    commissionFunds?: [string, string][];
+    fundingPayments?: Record<string, unknown>[];
 };
+
+export type MarketRiskStates = Map<MarketId, MarketRiskState>;
+export type MarketFunds = Map<MarketId, bigint>;
+export type FundingPayments = FundingPayment[];

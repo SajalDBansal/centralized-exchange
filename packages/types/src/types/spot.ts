@@ -1,8 +1,8 @@
 import { BaseOrderType, DepthType, FillType, InMarketFillType, MarketId, MarketType, OrderPosition, OrderSide, OrderStatus, OrderType, STPMode, TimeInForce } from "./base"
 
 interface BaseInMarketOrder {
-    entryPrice: bigint; // convert to bigint for calc
-    quantity: bigint; // convert to bigint for calc
+    entryPrice: bigint;
+    quantity: bigint;
     userId: string;
     marketId: MarketId;
     side: OrderSide;
@@ -21,15 +21,24 @@ interface BaseInMarketOrder {
     depths: { asks: DepthType[], bids: DepthType[] };
 }
 
+export interface OrderReservationLedger {
+    allotted: bigint;
+    used: bigint;
+    released: bigint;
+}
+
 export interface SpotInMarketOrder extends BaseInMarketOrder {
     marketType: MarketType.SPOT;
+    balanceLedger: OrderReservationLedger;
 }
 
 export interface PerpInMarketOrder extends BaseInMarketOrder {
     marketType: MarketType.PERP;
     leverage: number;
     margin: bigint;
+    marginLedger: OrderReservationLedger;
     reduceOnly: boolean;
+    liquidation?: boolean;
 }
 
 export type InMarketOrderType = SpotInMarketOrder | PerpInMarketOrder;
@@ -39,6 +48,7 @@ type NormalizeSpotOrderReturnType =
         SpotInMarketOrder,
         "entryPrice" |
         "quantity" |
+        "balanceLedger" |
         "remainingQty" |
         "filled" |
         "averagePrice" |
@@ -46,6 +56,11 @@ type NormalizeSpotOrderReturnType =
     > & {
         entryPrice: string;
         quantity: string;
+        balanceLedger: {
+            allotted: string;
+            used: string;
+            released: string;
+        };
         remainingQty: string;
         filled: string;
         averagePrice: string;
@@ -58,6 +73,7 @@ type NormalizePerpOrderReturnType =
         "entryPrice" |
         "quantity" |
         "margin" |
+        "marginLedger" |
         "remainingQty" |
         "filled" |
         "averagePrice" |
@@ -66,6 +82,11 @@ type NormalizePerpOrderReturnType =
         entryPrice: string;
         quantity: string;
         margin: string;
+        marginLedger: {
+            allotted: string;
+            used: string;
+            released: string;
+        };
         remainingQty: string;
         filled: string;
         averagePrice: string;
@@ -85,6 +106,6 @@ export interface BaseSpotOrderType extends BaseOrderType {
 export interface BasePerpOrderType extends BaseOrderType {
     marketType: MarketType.PERP;
     leverage: number;
-    margin: string;
     reduceOnly: boolean;
+    liquidation?: boolean;
 }

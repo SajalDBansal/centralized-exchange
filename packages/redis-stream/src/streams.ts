@@ -13,6 +13,11 @@ export async function initializeStreams() {
         REDIS_STREAMS.MARKET_EVENT,
         CONSUMER_GROUPS.SNAPSHOT_ENGINE
     );
+
+    await createGroup(
+        REDIS_STREAMS.DATABASE_EVENT,
+        CONSUMER_GROUPS.DATABASE_ENGINE
+    );
 }
 
 async function createGroup(stream: string, group: string) {

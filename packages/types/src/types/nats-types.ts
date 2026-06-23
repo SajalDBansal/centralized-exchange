@@ -21,6 +21,8 @@ export enum EVENT_TO_ENGINE_SUBJECT {
     MARKET_UPDATE = "engine.market.update",
     MARKET_DELETE = "engine.market.delete",
     MARKET_ADD_ASSET = "engine.market.asset.add",
+    INDEX_PRICE_UPDATE = "engine.market.indexPrice.update",
+    FUNDING_SETTLE = "engine.market.funding.settle",
     USER_ADD = "engine.user.add"
 }
 
@@ -107,6 +109,19 @@ export type AddUserPayload = {
     userId: UserId;
 }
 
+export type IndexPriceUpdatePayload = {
+    marketId: MarketId;
+    indexPrice: string;
+    timestamp: number;
+}
+
+export type FundingSettlePayload = {
+    marketId: MarketId;
+    indexPrice: string;
+    markPrice: string;
+    intervalSeconds: number;
+}
+
 export type PayloadToEngineType =
     CreateOrderPayload
     | CancelOrderPayload
@@ -121,6 +136,8 @@ export type PayloadToEngineType =
     | UpdateMarketPayload
     | DeleteMarketPayload
     | AddMarketAssetPayload
+    | IndexPriceUpdatePayload
+    | FundingSettlePayload
     | AddUserPayload;
 ;
 
@@ -140,6 +157,8 @@ export type PayloadToBackendType =
     | GetMarketByIdReturnPayload
     | AddMarketReturnPayload
     | UpdateMarketReturnPayload
+    | IndexPriceUpdateReturnPayload
+    | FundingSettleReturnPayload
     | DeleteMarketReturnPayload;
 
 export interface BaseReturnPayload {
@@ -232,5 +251,25 @@ export interface UpdateMarketReturnPayload extends BaseReturnPayloadWithUser {
 export interface DeleteMarketReturnPayload extends BaseReturnPayloadWithUser {
     data?: {
         marketId: MarketId;
+    }
+}
+
+export interface IndexPriceUpdateReturnPayload extends BaseReturnPayload {
+    data?: {
+        marketId: MarketId;
+        indexPrice: string;
+        liquidatablePositionIds: string[];
+        liquidationAttempts: number;
+        liquidationFailures: number;
+    }
+}
+
+export interface FundingSettleReturnPayload extends BaseReturnPayload {
+    data?: {
+        marketId: MarketId;
+        fundingRateBps: string;
+        payments: number;
+        insuranceUsed: string;
+        liquidatablePositionIds: string[];
     }
 }

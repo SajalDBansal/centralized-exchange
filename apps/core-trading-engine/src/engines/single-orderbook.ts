@@ -24,6 +24,7 @@ import {
 
 import { RejectError } from "../utils/error";
 import { formatBigInt } from "../utils/parse-incoming";
+import type { BalanceEngine } from "./balance-engine";
 
 
 function remaining(order: InMarketOrderType) {
@@ -51,11 +52,22 @@ export class SingleMarketOrderBook {
 
     private lastTradePrice = 0n;
 
-    constructor(market: Market, private readonly globalOrderMap: Map<OrderId, string>) {
+    private autoCancelledOrders: InMarketOrderType[] = [];
+
+    private matchedOrders = new Map<OrderId, InMarketOrderType>();
+
+    constructor(
+        market: Market,
+        private readonly globalOrderMap: Map<OrderId, string>,
+        private readonly globalOrders: Map<OrderId, InMarketOrderType>,
+        private readonly balanceEngine: BalanceEngine
+    ) {
         this.market = market;
     }
 
     addOrder(order: InMarketOrderType) {
+        this.autoCancelledOrders = [];
+        this.matchedOrders = new Map();
         this.validateOrder(order);
 
         if (order.timeInForce === TimeInForce.FOK) {
@@ -76,6 +88,18 @@ export class SingleMarketOrderBook {
         return this.match(order);
     }
 
+    consumeAutoCancelledOrders() {
+        const cancelledOrders = this.autoCancelledOrders;
+        this.autoCancelledOrders = [];
+        return cancelledOrders;
+    }
+
+    consumeMatchedOrders() {
+        const matchedOrders = this.matchedOrders;
+        this.matchedOrders = new Map();
+        return matchedOrders;
+    }
+
     cancelOrder(payload: CancelOrderPayload) {
         const node = this.orderMap.get(payload.orderId);
 
@@ -87,10 +111,6 @@ export class SingleMarketOrderBook {
 
         if (order.userId !== payload.userId) {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Unauthorized");
-        }
-
-        if (typeof order.entryPrice === "undefined") {
-            this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Market order cannot rest");
         }
 
         const levels = order.side === OrderSide.BUY ? this.bids : this.asks;
@@ -106,6 +126,7 @@ export class SingleMarketOrderBook {
         this.orderMap.delete(order.orderId);
 
         this.globalOrderMap.delete(order.orderId);
+        this.globalOrders.delete(order.orderId);
 
         this.removeUserOrder(order.userId, order.orderId);
 
@@ -160,6 +181,7 @@ export class SingleMarketOrderBook {
 
     private match(taker: InMarketOrderType) {
         const fills: InMarketFillType[] = [];
+        let reservationRejected = false;
 
         while (remaining(taker) > 0n) {
             const bestPrice = this.getBestOppositePrice(taker.side);
@@ -196,17 +218,26 @@ export class SingleMarketOrderBook {
 
                 const makerRemaining = remaining(maker);
 
-                const tradeQty = minBigInt(remaining(taker), makerRemaining);
+                const requestedQty = minBigInt(remaining(taker), makerRemaining);
+                const prepared = this.balanceEngine.prepareFill(maker, taker, requestedQty, bestPrice);
+                const tradeQty = prepared.qty;
+
+                if (tradeQty <= 0n) {
+                    reservationRejected = prepared.reservationRejected;
+                    current = null;
+                    break;
+                }
 
                 maker.filled += tradeQty;
 
                 taker.filled += tradeQty;
+                maker.remainingQty = remaining(maker);
 
                 this.tradeId++;
 
                 this.lastTradePrice = bestPrice;
 
-                fills.push({
+                const fill: InMarketFillType = {
                     tradeId: this.tradeId,
                     makerOrderId: maker.orderId,
                     takerOrderId: taker.orderId,
@@ -218,7 +249,12 @@ export class SingleMarketOrderBook {
                     price: bestPrice,
                     timestamp: Date.now(),
                     status: FillStatus.TRADE,
-                });
+                };
+
+                fills.push(fill);
+                maker.fills.push(fill);
+                this.matchedOrders.set(maker.orderId, maker);
+                this.matchedOrders.set(taker.orderId, taker);
 
                 const totalNotional = taker.averagePrice * (taker.filled - tradeQty) + bestPrice * tradeQty;
                 taker.averagePrice = taker.filled === 0n ? 0n : totalNotional / taker.filled;
@@ -238,19 +274,26 @@ export class SingleMarketOrderBook {
                     this.globalOrderMap.delete(
                         maker.orderId
                     );
+                    this.globalOrders.delete(maker.orderId);
 
                     this.removeUserOrder(
                         maker.userId,
                         maker.orderId
                     );
                 } else {
-                    maker.status = OrderStatus.PARTIAL;
+                    maker.status = OrderStatus.PARTIAL_FILLED;
+                }
+
+                if (prepared.reservationRejected) {
+                    reservationRejected = true;
+                    current = null;
+                    break;
                 }
 
                 current = next;
             }
 
-            if (taker.status === OrderStatus.CANCELLED) {
+            if (taker.status === OrderStatus.CANCELLED || reservationRejected) {
                 break;
             }
 
@@ -265,7 +308,10 @@ export class SingleMarketOrderBook {
             }
         }
 
-        if (taker.status === OrderStatus.CANCELLED) {
+        if (reservationRejected) {
+            taker.status = taker.filled > 0n ? OrderStatus.PARTIAL_REJECTED : OrderStatus.REJECTED;
+            taker.remainingQty = remaining(taker);
+        } else if (taker.status === OrderStatus.CANCELLED) {
             taker.remainingQty = remaining(taker);
         } else if (remaining(taker) > 0n) {
             if (
@@ -273,13 +319,13 @@ export class SingleMarketOrderBook {
                 taker.timeInForce === TimeInForce.IOC ||
                 taker.timeInForce === TimeInForce.FOK
             ) {
-                taker.status = taker.filled > 0n ? OrderStatus.PARTIAL : OrderStatus.CANCELLED;
+                taker.status = taker.filled > 0n ? OrderStatus.PARTIAL_FILLED : OrderStatus.CANCELLED;
             } else {
                 this.restOrder(taker);
 
                 taker.status =
                     taker.filled > 0n
-                        ? OrderStatus.PARTIAL
+                        ? OrderStatus.PARTIAL_FILLED
                         : OrderStatus.OPEN;
             }
         } else {
@@ -294,10 +340,6 @@ export class SingleMarketOrderBook {
     }
 
     private restOrder(order: InMarketOrderType) {
-        if (typeof order.entryPrice === "undefined") {
-            this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Resting order requires price");
-        }
-
         const levels = order.side === OrderSide.BUY ? this.bids : this.asks;
 
         let tree = order.side === OrderSide.BUY ? this.bidTree : this.askTree;
@@ -323,6 +365,7 @@ export class SingleMarketOrderBook {
         this.orderMap.set(order.orderId, node);
 
         this.globalOrderMap.set(order.orderId, order.marketId);
+        this.globalOrders.set(order.orderId, order);
 
         this.addUserOrder(order.userId, order.orderId);
     }
@@ -334,7 +377,7 @@ export class SingleMarketOrderBook {
 
         let iter = order.side === OrderSide.BUY
             ? this.askTree.begin
-            : this.bidTree.end.prev();
+            : this.bidTree.end;
 
         while (iter && iter.valid && remainingQty > 0n) {
             const price = iter.key;
@@ -353,9 +396,19 @@ export class SingleMarketOrderBook {
 
             if (!level) { break; }
 
-            executable += minBigInt(level.totalQty, remainingQty);
+            let executableAtLevel = 0n;
+            let current = level.head;
 
-            remainingQty -= minBigInt(level.totalQty, remainingQty);
+            while (current) {
+                if (current.order.userId !== order.userId) {
+                    executableAtLevel += remaining(current.order);
+                }
+                current = current.next;
+            }
+
+            const fillableQty = minBigInt(executableAtLevel, remainingQty);
+            executable += fillableQty;
+            remainingQty -= fillableQty;
 
             if (order.side === OrderSide.BUY) {
                 iter.next();
@@ -368,13 +421,9 @@ export class SingleMarketOrderBook {
     }
 
     private wouldCross(order: InMarketOrderType) {
-        if (typeof order.entryPrice === "undefined") {
-            return true;
-        }
-
         const best = order.side === OrderSide.BUY
             ? this.askTree.begin
-            : this.bidTree.end.prev();
+            : this.bidTree.end;
 
         if (!best || !best.valid) {
             return false;
@@ -401,18 +450,12 @@ export class SingleMarketOrderBook {
         }
 
         const best = this.bidTree.end;
-        best.prev();
-
         return best.valid ? best.key : undefined;
     }
 
     private priceCross(order: InMarketOrderType, bestPrice: bigint) {
         if (order.type === OrderType.MARKET) {
             return true;
-        }
-
-        if (typeof order.entryPrice === "undefined") {
-            return false;
         }
 
         if (order.side === OrderSide.BUY) {
@@ -432,18 +475,22 @@ export class SingleMarketOrderBook {
 
             case STPMode.CANCEL_MAKER:
                 maker.status = OrderStatus.CANCELLED;
+                this.autoCancelledOrders.push(maker);
                 level.remove(makerNode);
                 this.orderMap.delete(maker.orderId);
                 this.globalOrderMap.delete(maker.orderId);
+                this.globalOrders.delete(maker.orderId);
                 this.removeUserOrder(maker.userId, maker.orderId);
                 return false;
 
             case STPMode.CANCEL_BOTH:
                 taker.status = OrderStatus.CANCELLED;
                 maker.status = OrderStatus.CANCELLED;
+                this.autoCancelledOrders.push(maker);
                 level.remove(makerNode);
                 this.orderMap.delete(maker.orderId);
                 this.globalOrderMap.delete(maker.orderId);
+                this.globalOrders.delete(maker.orderId);
                 this.removeUserOrder(maker.userId, maker.orderId);
                 return true;
         }
@@ -457,11 +504,7 @@ export class SingleMarketOrderBook {
             this.reject(EVENT_REJECT_CODES.INVALID_QUANTITY, "Invalid quantity");
         }
 
-        if (order.type === OrderType.LIMIT && typeof order.entryPrice === "undefined") {
-            this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Limit order requires price");
-        }
-
-        if (typeof order.entryPrice !== "undefined" && order.entryPrice <= 0n) {
+        if (order.entryPrice <= 0n) {
             this.reject(EVENT_REJECT_CODES.INVALID_PRICE, "Invalid price");
         }
 
@@ -476,7 +519,6 @@ export class SingleMarketOrderBook {
         const asks: DepthType[] = [];
 
         const bidIter = this.bidTree.end;
-        bidIter.prev();
 
         while (bidIter.valid && bids.length < levels) {
             const price = bidIter.key;

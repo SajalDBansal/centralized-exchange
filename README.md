@@ -493,52 +493,9 @@ These diagrams describe the intended system shape. Some pieces, like the databas
 ### System Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Apps
-        CoreFrontend["core-frontend"]
-        DocsFrontend["docs-frontend"]
-        CoreBackend["core-backend"]
-        TradingEngine["core-trading-engine"]
-        DatabaseEngine["database-engine"]
-        WsServer["ws-server"]
-    end
 
-    subgraph SharedPackages["Workspace Packages"]
-        TypesPkg["@workspace/types"]
-        ValidationPkg["@workspace/validations"]
-        DbPkg["@workspace/database"]
-        RedisPkg["@workspace/redis-streams"]
-        NatsPkg["@workspace/nats-streams"]
-        UiPkg["@workspace/ui"]
-    end
 
-    subgraph Infra["Infrastructure"]
-        Nats["NATS"]
-        Redis["Redis"]
-        Postgres["PostgreSQL"]
-        Snapshot["Engine Snapshot File"]
-    end
 
-    CoreFrontend --> UiPkg
-    DocsFrontend --> UiPkg
-    CoreFrontend --> CoreBackend
-    CoreBackend --> ValidationPkg
-    CoreBackend --> TypesPkg
-    CoreBackend --> NatsPkg
-    CoreBackend --> RedisPkg
-    CoreBackend --> DbPkg
-    NatsPkg --> Nats
-    RedisPkg --> Redis
-    DbPkg --> Postgres
-    CoreBackend --> Nats
-    Nats --> TradingEngine
-    TradingEngine --> TypesPkg
-    TradingEngine --> Snapshot
-    TradingEngine -. planned .-> Redis
-    Redis -. planned .-> DatabaseEngine
-    DatabaseEngine -. planned .-> Postgres
-    Redis -. planned .-> WsServer
-    WsServer -. planned .-> CoreFrontend
 ```
 
 ### Order Matching Flow

@@ -6,11 +6,14 @@ export class RedisConsumer<T> {
     constructor(private options: ConsumeOptions<T>) { }
 
     async start() {
+        const blockingRedis = await RedisManager.createBlockingConnection(
+            `${this.options.stream}:${this.options.group}:${this.options.consumer}`
+        );
         const redis = await RedisManager.getInstance();
 
         while (true) {
             try {
-                const response = await redis.xReadGroup(
+                const response = await blockingRedis.xReadGroup(
                     this.options.group,
                     this.options.consumer,
                     [

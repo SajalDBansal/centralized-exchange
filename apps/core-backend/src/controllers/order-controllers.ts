@@ -18,7 +18,7 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     if (!validateData.success) throw ValidationError.fromZod(validateData.error);
 
-    const { marketId, entryPrice, quantity, side, position, leverage, type, postOnly, marketType, margin, reduceOnly, stpMode, timeInForce } = validateData.data;
+    const { marketId, entryPrice, quantity, side, position, leverage, type, postOnly, marketType, reduceOnly, stpMode, timeInForce } = validateData.data;
 
     const nats = await natsPromise;
 
@@ -28,7 +28,7 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
             entryPrice, quantity, userId, marketId,
             side, type, postOnly, stpMode, position,
             timeInForce, createdAt: Date.now(),
-            reduceOnly, margin, leverage, marketType
+            reduceOnly, leverage, marketType
         }
     );
 

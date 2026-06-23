@@ -1,14 +1,22 @@
-import { AddMarketType, Asset, BaseBalanceType, EVENT_REJECT_CODES, Market, MarketId, MarketsType, OrderId, UserPosition } from "@workspace/types";
+import { AddMarketType, Asset, BaseBalanceType, EVENT_REJECT_CODES, FundingSettlePayload, InMarketOrderType, IndexPriceUpdatePayload, Market, MarketFunds, MarketId, MarketRiskStates, MarketsType, OrderId } from "@workspace/types";
 import { RejectError } from "../utils/error";
+import { formatBigInt, parseBigInt } from "../utils/parse-incoming";
+import type { BalanceEngine } from "./balance-engine";
+import type { Position } from "./position-engine";
+import { SingleMarketPositions } from "./single-market-positions";
 import { SingleMarketOrderBook } from "./single-orderbook";
 
 type MarketEngineDeps = {
     markets: MarketsType;
     orderbooks: Map<string, SingleMarketOrderBook>;
-    positions: Map<string, UserPosition>;
+    positions: Map<string, SingleMarketPositions>;
     orderMap: Map<OrderId, MarketId>;
     assets: Map<string, Asset>;
     balances: Map<string, BaseBalanceType>;
+    orders: Map<OrderId, InMarketOrderType>;
+    marketRisk: MarketRiskStates;
+    insuranceFunds: MarketFunds;
+    commissionFunds: MarketFunds;
 };
 
 export const baseAsset: Asset[] = [
@@ -47,7 +55,11 @@ export const DEFAULT_QUOTE_ASSET_PERP = quoteAsset.find(a => a.symbol === "USD")
 export class MarketEngine {
 
 
-    constructor(private state: MarketEngineDeps) { }
+    constructor(
+        private state: MarketEngineDeps,
+        private readonly balanceEngine: BalanceEngine,
+        private readonly positionEngine: Position
+    ) { }
 
 
     initializeMarkets() {
@@ -79,18 +91,14 @@ export class MarketEngine {
                     minNotional: 1,
                 });
 
-                this.state.positions.set(
-                    marketName,
-                    new Map()
-                );
-
                 const market = this.state.markets.get(marketName);
 
                 if (!market) {
                     this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Failed to initialize market");
                 }
 
-                this.state.orderbooks.set(marketName, new SingleMarketOrderBook(market, this.state.orderMap));
+                this.positionEngine.initializeMarket(market);
+                this.state.orderbooks.set(marketName, new SingleMarketOrderBook(market, this.state.orderMap, this.state.orders, this.balanceEngine));
             }
 
             // Create perp markets
@@ -107,6 +115,15 @@ export class MarketEngine {
                 lotSize: 1,
                 minNotional: 1,
             });
+
+            const perpMarket = this.state.markets.get(marketName);
+
+            if (!perpMarket) {
+                this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Failed to initialize perp market");
+            }
+
+            this.positionEngine.initializeMarket(perpMarket);
+            this.state.orderbooks.set(marketName, new SingleMarketOrderBook(perpMarket, this.state.orderMap, this.state.orders, this.balanceEngine));
         }
     }
 
@@ -124,6 +141,47 @@ export class MarketEngine {
             this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Market not found");
         }
         return market;
+    }
+
+    onIndexPriceUpdate(payload: IndexPriceUpdatePayload) {
+        const market = this.getMarketById(payload.marketId);
+        const indexPrice = this.parsePrice(payload.indexPrice, market, "index price");
+        const risk = this.getOrCreateRiskState(payload.marketId);
+        risk.indexPrice = indexPrice;
+        risk.indexUpdatedAt = payload.timestamp;
+
+        return {
+            marketId: payload.marketId,
+            indexPrice: formatBigInt(indexPrice, market.quoteAsset.precision),
+            liquidatablePositions: this.positionEngine.getLiquidatablePositions(payload.marketId, indexPrice),
+        };
+    }
+
+    onFundingSettle(payload: FundingSettlePayload) {
+        const market = this.getMarketById(payload.marketId);
+        const indexPrice = this.parsePrice(payload.indexPrice, market, "index price");
+        const markPrice = this.parsePrice(payload.markPrice, market, "mark price");
+
+        if (!Number.isInteger(payload.intervalSeconds) || payload.intervalSeconds <= 0) {
+            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Invalid funding interval");
+        }
+
+        const risk = this.getOrCreateRiskState(payload.marketId);
+        const premiumBps = ((indexPrice - markPrice) * 10_000n) / indexPrice;
+        const intervalRateBps = (premiumBps * BigInt(payload.intervalSeconds)) / 3_600n;
+        const fundingRateBps = this.clamp(intervalRateBps, -1n, 1n);
+        const result = this.positionEngine.applyFunding(payload.marketId, fundingRateBps, Date.now());
+        risk.indexPrice = indexPrice;
+        risk.indexUpdatedAt = Date.now();
+        risk.lastFundingRateBps = fundingRateBps;
+        risk.lastFundingSettledAt = Date.now();
+
+        return {
+            marketId: payload.marketId,
+            indexPrice,
+            ...result,
+            liquidatablePositions: this.positionEngine.getLiquidatablePositions(payload.marketId, indexPrice),
+        };
     }
 
     updateMarket(marketId: MarketId, marketData: Partial<Market>): Market {
@@ -153,8 +211,8 @@ export class MarketEngine {
 
         this.state.markets.set(marketData.id, newMarket);
 
-        this.state.positions.set(marketData.id, new Map());
-        this.state.orderbooks.set(marketData.id, new SingleMarketOrderBook(newMarket, this.state.orderMap));
+        this.positionEngine.initializeMarket(newMarket);
+        this.state.orderbooks.set(marketData.id, new SingleMarketOrderBook(newMarket, this.state.orderMap, this.state.orders, this.balanceEngine));
     }
 
     deleteMarket(marketId: MarketId) {
@@ -177,7 +235,7 @@ export class MarketEngine {
             if (marketPositions && marketPositions.size > 0) {
                 this.reject(EVENT_REJECT_CODES.MARKET_NOT_EMPTY, "Market has open positions");
             } else {
-                this.state.positions.delete(market.id);
+                this.positionEngine.deleteMarket(market.id);
             }
         }
 
@@ -199,6 +257,9 @@ export class MarketEngine {
         }
 
         this.state.markets.delete(market.id);
+        this.state.marketRisk.delete(market.id);
+        this.state.insuranceFunds.delete(market.id);
+        this.state.commissionFunds.delete(market.id);
     }
 
     addMarketAsset(asset: Asset, assetSide: "base" | "quote") {
@@ -222,6 +283,36 @@ export class MarketEngine {
 
     private reject(code: EVENT_REJECT_CODES, message: string): never {
         throw new RejectError(code, message);
+    }
+
+    private getOrCreateRiskState(marketId: MarketId) {
+        let risk = this.state.marketRisk.get(marketId);
+
+        if (!risk) {
+            risk = {
+                indexPrice: 0n,
+                indexUpdatedAt: 0,
+                lastFundingRateBps: 0n,
+                lastFundingSettledAt: 0,
+            };
+            this.state.marketRisk.set(marketId, risk);
+        }
+
+        return risk;
+    }
+
+    private parsePrice(value: string, market: Market, field: string) {
+        const price = parseBigInt(value, market.quoteAsset.precision, EVENT_REJECT_CODES.INVALID_PRICE, field);
+
+        if (price <= 0n) {
+            this.reject(EVENT_REJECT_CODES.INVALID_PRICE, `${field} must be positive`);
+        }
+
+        return price;
+    }
+
+    private clamp(value: bigint, min: bigint, max: bigint) {
+        return value < min ? min : value > max ? max : value;
     }
 
 }

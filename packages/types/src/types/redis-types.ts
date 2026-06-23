@@ -1,7 +1,9 @@
+import { DatabaseWriteEvent } from "./database-types";
 import { IncomingEventTypes, PayloadToEngineType } from "./nats-types";
 
 export const REDIS_STREAMS = {
     MARKET_EVENT: "market:event",
+    DATABASE_EVENT: "database:event",
 
     backendResponse: (backendId: string) => `backend:response:${backendId}`,
 }
@@ -9,11 +11,13 @@ export const REDIS_STREAMS = {
 export const CONSUMER_GROUPS = {
     TRADE_ENGINE: "trade-engine-group",
     SNAPSHOT_ENGINE: "snapshot-engine-group",
+    DATABASE_ENGINE: "database-engine-group",
 }
 
 export const CONSUMERS = {
     TRADE_ENGINE: "trade-engine",
     SNAPSHOT_ENGINE: "snapshot-engine",
+    DATABASE_ENGINE: "database-engine",
 }
 
 export enum EventSource {
@@ -37,6 +41,8 @@ export interface TradeResultEvent {
     payload: Record<string, any>;
     timestamp: number;
 }
+
+export type DatabaseStreamEvent = DatabaseWriteEvent;
 
 export interface ConsumeOptions<T> {
     stream: string;

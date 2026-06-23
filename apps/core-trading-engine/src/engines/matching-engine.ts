@@ -9,19 +9,19 @@ import {
     InMarketOrderType,
     Market,
     MarketId,
+    MarketType,
     normalizeIncomingOrderType,
     OrderId,
     OrderStatus,
-    UserPosition,
 } from "@workspace/types";
 import cuid from "cuid";
 import { RejectError } from "../utils/error";
+import type { BalanceEngine } from "./balance-engine";
 import { SingleMarketOrderBook } from "./single-orderbook";
 
 type ReadonlyEngineState = {
     readonly markets: ReadonlyMap<MarketId, Market>;
     readonly balances: ReadonlyMap<string, BaseBalanceType>;
-    readonly positions: ReadonlyMap<MarketId, UserPosition>;
 };
 
 type MatchingEngineDeps = ReadonlyEngineState & {
@@ -31,17 +31,24 @@ type MatchingEngineDeps = ReadonlyEngineState & {
 };
 
 export class MatchingEngine {
-    constructor(private readonly state: MatchingEngineDeps) { }
+    constructor(private readonly state: MatchingEngineDeps, private readonly balanceEngine: BalanceEngine) { }
 
     initializeMarket(market: Market) {
         if (this.state.orderbooks.has(market.id)) {
             this.reject(EVENT_REJECT_CODES.MARKET_ALREADY_EXISTS, "Orderbook already exists");
         }
 
-        this.state.orderbooks.set(market.id, new SingleMarketOrderBook(market, this.state.orderMap));
+        this.state.orderbooks.set(market.id, new SingleMarketOrderBook(market, this.state.orderMap, this.state.orders, this.balanceEngine));
     }
 
-    createOrder(payload: normalizeIncomingOrderType): InMarketOrderType {
+    createOrder(
+        payload: normalizeIncomingOrderType,
+        initiallyLocked: bigint
+    ): {
+        order: InMarketOrderType;
+        cancelledOrders: InMarketOrderType[];
+        matchedOrders: Map<OrderId, InMarketOrderType>;
+    } {
         const orderbook = this.state.orderbooks.get(payload.marketId);
 
         if (!orderbook) {
@@ -57,12 +64,18 @@ export class MatchingEngine {
             status: OrderStatus.OPEN,
             fills: [],
             depths: { asks: [], bids: [] },
+            ...(payload.marketType === MarketType.PERP
+                ? { marginLedger: { allotted: payload.margin, used: 0n, released: 0n } }
+                : { balanceLedger: { allotted: initiallyLocked, used: 0n, released: 0n } }),
         } as InMarketOrderType;
 
         const result = orderbook.addOrder(order);
-        this.state.orders.set(result.orderId, result);
 
-        return result;
+        return {
+            order: result,
+            cancelledOrders: orderbook.consumeAutoCancelledOrders(),
+            matchedOrders: orderbook.consumeMatchedOrders(),
+        };
     }
 
     cancelOrder(payload: CancelOrderPayload): InMarketOrderType {
@@ -92,19 +105,7 @@ export class MatchingEngine {
             return order;
         }
 
-        const marketId = this.state.orderMap.get(payload.orderId);
-
-        if (!marketId) {
-            this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order not found");
-        }
-
-        const orderbook = this.state.orderbooks.get(marketId);
-
-        if (!orderbook) {
-            this.reject(EVENT_REJECT_CODES.INVALID_MARKET, "Orderbook not found");
-        }
-
-        return orderbook.getUserOrderByID(payload);
+        this.reject(EVENT_REJECT_CODES.ORDER_NOT_FOUND, "Order not found");
     }
 
     getUserOpenOrders(payload: GetUserOpenOrdersPayload): InMarketOrderType[] {

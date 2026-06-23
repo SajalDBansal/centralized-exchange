@@ -21,7 +21,7 @@ export class BackendResponseRouter {
         if (this.isRunning) return;
         this.isRunning = true;
 
-        const redis = await RedisManager.getInstance();
+        const redis = await RedisManager.createBlockingConnection(`response:${this.backendId}`);
         const streamKey = REDIS_STREAMS.backendResponse(this.backendId);
 
         console.log(`[ResponseRouter] Starting listener on stream: ${streamKey}`);

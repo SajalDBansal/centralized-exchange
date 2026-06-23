@@ -9,9 +9,6 @@ export const CreateOrderClientSchema = z.object({
     quantity: z.string("Quantity should be a valid number").regex(/^\d*\.?\d*$/, {
         message: "Only numbers and a single decimal point are allowed",
     }),
-    margin: z.string("Margin should be a valid number").regex(/^\d*\.?\d*$/, {
-        message: "Only numbers and a single decimal point are allowed",
-    }),
     leverage: z.number("Leverage should be a valid number"),
     side: z.enum([OrderSide.BUY, OrderSide.SELL]),
     marketType: z.enum([MarketType.PERP, MarketType.SPOT]),

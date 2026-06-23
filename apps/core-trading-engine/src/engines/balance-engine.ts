@@ -14,21 +14,23 @@ import {
     OrderId,
     OrderSide,
     OrderStatus,
+    OrderType,
     ReturnBalanceType,
+    TimeInForce,
     UserId,
-    UserPosition,
 } from "@workspace/types";
 import { RejectError } from "../utils/error";
-import { SingleMarketOrderBook } from "./single-orderbook";
-import { formatBigInt, perpMargin, quoteNotional } from "../utils/parse-incoming";
+import type { SingleMarketOrderBook } from "./single-orderbook";
+import { bufferedPerpMargin, formatBigInt, parseBigInt, perpMargin, quoteNotional } from "../utils/parse-incoming";
 
 type ReadonlyEngineState = {
     readonly markets: ReadonlyMap<MarketId, Market>;
     readonly orderbooks: ReadonlyMap<MarketId, SingleMarketOrderBook>;
-    readonly positions: ReadonlyMap<MarketId, UserPosition>;
     readonly orderMap: ReadonlyMap<OrderId, MarketId>;
     readonly orders: ReadonlyMap<OrderId, InMarketOrderType>;
     readonly assets: ReadonlyMap<string, Asset>;
+    readonly insuranceFunds: Map<MarketId, bigint>;
+    readonly commissionFunds: Map<MarketId, bigint>;
 };
 
 type BalancesEngineDeps = ReadonlyEngineState & {
@@ -102,29 +104,46 @@ export class BalanceEngine {
         const balances = this.getUserBalanceMap(order.userId);
 
         if (order.marketType === MarketType.PERP) {
-            this.lock(balances, market.quoteAsset, this.requiredPerpMargin(order, market));
-            return;
+            const amount = order.reduceOnly
+                ? 0n
+                : order.type === OrderType.MARKET
+                    ? bufferedPerpMargin(order.quantity, order.entryPrice, order.leverage, market)
+                    : this.requiredPerpMargin(order, market);
+            this.lock(balances, market.quoteAsset, amount, EVENT_REJECT_CODES.INSUFFICIENT_MARGIN);
+            return amount;
         }
 
         if (order.side === OrderSide.BUY) {
-            this.lock(balances, market.quoteAsset, quoteNotional(order.quantity, order.entryPrice, market));
-            return;
+            const notional = quoteNotional(order.quantity, order.entryPrice, market);
+            const amount = notional + this.fillFee(notional, false);
+            this.lock(balances, market.quoteAsset, amount);
+            return amount;
         }
 
         this.lock(balances, market.baseAsset, order.quantity);
+        return order.quantity;
     }
 
-    applyFill(fill: InMarketFillType) {
+    applyFill(fill: InMarketFillType, makerOrder: InMarketOrderType, takerOrder: InMarketOrderType) {
         const market = this.getMarket(fill.marketId);
-        const makerOrder = this.state.orders.get(fill.makerOrderId);
-        const takerOrder = this.state.orders.get(fill.takerOrderId);
 
-        if (!makerOrder || !takerOrder) {
-            this.reject(EVENT_REJECT_CODES.INTERNAL_ERROR, "Fill order missing");
-        }
+        this.applySpotFillToUser(makerOrder, fill.makerUserId, fill.qty, fill.price, market, true);
+        this.applySpotFillToUser(takerOrder, fill.takerUserId, fill.qty, fill.price, market, false);
+    }
 
-        this.applySpotFillToUser(makerOrder, fill.makerUserId, fill.qty, fill.price, market);
-        this.applySpotFillToUser(takerOrder, fill.takerUserId, fill.qty, fill.price, market);
+    applyPerpFillFees(fill: InMarketFillType, makerOrder: InMarketOrderType, takerOrder: InMarketOrderType) {
+        const market = this.getMarket(fill.marketId);
+        const notional = quoteNotional(fill.qty, fill.price, market);
+        this.chargeAvailableQuoteFee(
+            makerOrder.userId,
+            market,
+            this.fillFee(notional, true, makerOrder.marketType === MarketType.PERP && makerOrder.liquidation)
+        );
+        this.chargeAvailableQuoteFee(
+            takerOrder.userId,
+            market,
+            this.fillFee(notional, false, takerOrder.marketType === MarketType.PERP && takerOrder.liquidation)
+        );
     }
 
     releaseUnusedBalance(order: InMarketOrderType) {
@@ -132,25 +151,18 @@ export class BalanceEngine {
         const balances = this.getUserBalanceMap(order.userId);
 
         if (order.marketType === MarketType.PERP) {
-            const desired = this.shouldKeepRestingLock(order)
-                ? this.requiredPerpMargin(order, market, order.remainingQty)
-                : 0n;
-            const spent = this.filledMargin(order, market);
-            const release = this.requiredPerpMargin(order, market) - spent - desired;
-            this.unlock(balances, market.quoteAsset, release);
+            if (!this.shouldKeepRestingLock(order)) {
+                this.releasePerpOrderReservation(order, balances, market);
+            }
             return;
         }
 
         if (order.side === OrderSide.BUY) {
-            const desired = this.shouldKeepRestingLock(order) ? quoteNotional(order.remainingQty, order.entryPrice, market) : 0n;
-            const spent = this.filledCost(order, market);
-            const release = quoteNotional(order.quantity, order.entryPrice, market) - spent - desired;
-            this.unlock(balances, market.quoteAsset, release);
+            this.releaseSpotOrderReservation(order, balances, market);
             return;
         }
 
-        const desired = this.shouldKeepRestingLock(order) ? order.remainingQty : 0n;
-        this.unlock(balances, market.baseAsset, order.quantity - order.filled - desired);
+        this.releaseSpotOrderReservation(order, balances, market);
     }
 
     releaseOrderMargin(order: InMarketOrderType) {
@@ -158,36 +170,60 @@ export class BalanceEngine {
         const balances = this.getUserBalanceMap(order.userId);
 
         if (order.marketType === MarketType.PERP) {
-            this.unlock(balances, market.quoteAsset, this.requiredPerpMargin(order, market, order.remainingQty));
+            this.releasePerpOrderReservation(order, balances, market);
             return;
         }
 
-        if (order.side === OrderSide.BUY) {
-            this.unlock(balances, market.quoteAsset, quoteNotional(order.remainingQty, order.entryPrice, market));
-            return;
-        }
-
-        this.unlock(balances, market.baseAsset, order.remainingQty);
+        this.releaseSpotOrderReservation(order, balances, market, false);
     }
 
-    releaseBalance(order: normalizeIncomingOrderType) {
+    releaseBalance(order: normalizeIncomingOrderType, initiallyLocked: bigint) {
         const market = this.getMarket(order.marketId);
         const balances = this.getUserBalanceMap(order.userId);
 
         if (order.marketType === MarketType.PERP) {
-            this.unlock(balances, market.quoteAsset, this.requiredPerpMargin(order, market));
+            this.unlock(balances, market.quoteAsset, initiallyLocked);
             return;
         }
 
         if (order.side === OrderSide.BUY) {
-            this.unlock(balances, market.quoteAsset, quoteNotional(order.quantity, order.entryPrice, market));
+            this.unlock(balances, market.quoteAsset, initiallyLocked);
             return;
         }
 
         this.unlock(balances, market.baseAsset, order.quantity);
     }
 
-    private applySpotFillToUser(order: InMarketOrderType, userId: string, qty: bigint, price: bigint, market: Market) {
+    prepareFill(maker: InMarketOrderType, taker: InMarketOrderType, requestedQty: bigint, price: bigint) {
+        if (maker.marketType === MarketType.SPOT && taker.marketType === MarketType.SPOT) {
+            return this.prepareSpotFill(maker, taker, requestedQty, price);
+        }
+
+        if (maker.marketType !== MarketType.PERP || taker.marketType !== MarketType.PERP) {
+            return { qty: requestedQty, reservationRejected: false };
+        }
+
+        const market = this.getMarket(taker.marketId);
+        const makerQty = this.maxPerpFillQty(maker, requestedQty, price, market);
+        const takerQty = this.maxPerpFillQty(taker, requestedQty, price, market);
+        const qty = makerQty < takerQty ? makerQty : takerQty;
+
+        if (qty > 0n) {
+            this.allotPerpFillMargin(maker, qty, price, market);
+            this.allotPerpFillMargin(taker, qty, price, market);
+        }
+
+        return { qty, reservationRejected: qty < requestedQty };
+    }
+
+    private applySpotFillToUser(
+        order: InMarketOrderType,
+        userId: string,
+        qty: bigint,
+        price: bigint,
+        market: Market,
+        maker: boolean
+    ) {
         if (order.marketType === MarketType.PERP) {
             return;
         }
@@ -196,15 +232,18 @@ export class BalanceEngine {
         const quote = this.getOrCreateBalance(balances, market.quoteAsset.id);
         const base = this.getOrCreateBalance(balances, market.baseAsset.id);
         const quoteAmount = quoteNotional(qty, price, market);
+        const fee = this.fillFee(quoteAmount, maker, false);
 
         if (order.side === OrderSide.BUY) {
-            this.debitLocked(quote, quoteAmount);
+            this.debitLocked(quote, quoteAmount + fee);
             base.total += qty;
+            this.addCommission(market.id, fee);
             return;
         }
 
         this.debitLocked(base, qty);
-        quote.total += quoteAmount;
+        quote.total += quoteAmount - fee;
+        this.addCommission(market.id, fee);
     }
 
     private getAllAssets(): Set<string> {
@@ -249,7 +288,12 @@ export class BalanceEngine {
         return balance;
     }
 
-    private lock(balances: BaseBalanceType, asset: Asset, amount: bigint) {
+    private lock(
+        balances: BaseBalanceType,
+        asset: Asset,
+        amount: bigint,
+        code = EVENT_REJECT_CODES.INSUFFICIENT_BALANCE
+    ) {
         if (amount <= 0n) {
             return;
         }
@@ -257,7 +301,7 @@ export class BalanceEngine {
         const balance = this.getOrCreateBalance(balances, asset.id);
 
         if (balance.total - balance.locked < amount) {
-            this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient available balance");
+            this.reject(code, "Insufficient available balance");
         }
 
         balance.locked += amount;
@@ -286,26 +330,9 @@ export class BalanceEngine {
     }
 
     private shouldKeepRestingLock(order: InMarketOrderType) {
-        return order.status === OrderStatus.OPEN || order.status === OrderStatus.PARTIAL;
-    }
-
-    private filledCost(order: InMarketOrderType, market: Market) {
-        return order.fills.reduce((sum, fill) => {
-            const isBuyer = order.side === OrderSide.BUY;
-            const isOrder = fill.makerOrderId === order.orderId || fill.takerOrderId === order.orderId;
-            return isBuyer && isOrder ? sum + quoteNotional(fill.qty, fill.price, market) : sum;
-        }, 0n);
-    }
-
-    private filledMargin(order: InMarketOrderType, market: Market) {
-        if (order.marketType !== MarketType.PERP || order.filled === 0n) {
-            return 0n;
-        }
-
-        return order.fills.reduce((sum, fill) => {
-            const isOrder = fill.makerOrderId === order.orderId || fill.takerOrderId === order.orderId;
-            return isOrder ? sum + perpMargin(fill.qty, fill.price, order.leverage, market) : sum;
-        }, 0n);
+        return order.type === OrderType.LIMIT
+            && order.timeInForce === TimeInForce.GTC
+            && (order.status === OrderStatus.OPEN || order.status === OrderStatus.PARTIAL_FILLED);
     }
 
     private requiredPerpMargin(order: normalizeIncomingOrderType | InMarketOrderType, market: Market, qty = order.quantity) {
@@ -314,6 +341,232 @@ export class BalanceEngine {
         }
 
         return perpMargin(qty, order.entryPrice, order.leverage, market);
+    }
+
+    private prepareSpotFill(
+        maker: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        taker: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        requestedQty: bigint,
+        price: bigint
+    ) {
+        const market = this.getMarket(taker.marketId);
+        const makerQty = this.maxSpotFillQty(maker, requestedQty, price, market, true);
+        const takerQty = this.maxSpotFillQty(taker, requestedQty, price, market, false);
+        const qty = makerQty < takerQty ? makerQty : takerQty;
+
+        if (qty > 0n) {
+            this.allotSpotFillBalance(maker, qty, price, market, true);
+            this.allotSpotFillBalance(taker, qty, price, market, false);
+        }
+
+        return { qty, reservationRejected: qty < requestedQty };
+    }
+
+    private maxSpotFillQty(
+        order: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        requestedQty: bigint,
+        price: bigint,
+        market: Market,
+        maker: boolean
+    ) {
+        const availableReservation = this.availableSpotOrderReservation(order);
+
+        if (order.side === OrderSide.SELL) {
+            return availableReservation < requestedQty ? availableReservation : requestedQty;
+        }
+
+        const balances = this.getUserBalanceMap(order.userId);
+        const quote = this.getOrCreateBalance(balances, market.quoteAsset.id);
+        const availableWalletBalance = order.type === OrderType.MARKET
+            ? quote.total - quote.locked
+            : 0n;
+        const capacity = availableReservation + availableWalletBalance;
+
+        if (this.requiredSpotBuyBalance(order, requestedQty, price, market, maker) <= capacity) {
+            return requestedQty;
+        }
+
+        let low = 0n;
+        let high = requestedQty;
+
+        while (low < high) {
+            const mid = (low + high + 1n) / 2n;
+
+            if (this.requiredSpotBuyBalance(order, mid, price, market, maker) <= capacity) {
+                low = mid;
+            } else {
+                high = mid - 1n;
+            }
+        }
+
+        return this.floorToLotSize(low, market);
+    }
+
+    private allotSpotFillBalance(
+        order: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        qty: bigint,
+        price: bigint,
+        market: Market,
+        maker: boolean
+    ) {
+        const required = order.side === OrderSide.BUY
+            ? this.requiredSpotBuyBalance(order, qty, price, market, maker)
+            : qty;
+        const availableReservation = this.availableSpotOrderReservation(order);
+        const additional = required > availableReservation ? required - availableReservation : 0n;
+
+        if (additional > 0n) {
+            const balances = this.getUserBalanceMap(order.userId);
+            this.lock(balances, market.quoteAsset, additional);
+            order.balanceLedger.allotted += additional;
+        }
+
+        order.balanceLedger.used += required;
+    }
+
+    private availableSpotOrderReservation(order: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>) {
+        return order.balanceLedger.allotted - order.balanceLedger.used - order.balanceLedger.released;
+    }
+
+    private releaseSpotOrderReservation(
+        order: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        balances: BaseBalanceType,
+        market: Market,
+        keepRestingLock = this.shouldKeepRestingLock(order)
+    ) {
+        const desired = keepRestingLock
+            ? order.side === OrderSide.BUY
+                ? this.requiredSpotBuyBalance(order, order.remainingQty, order.entryPrice, market, true)
+                : order.remainingQty
+            : 0n;
+        const available = this.availableSpotOrderReservation(order);
+        const release = available > desired ? available - desired : 0n;
+        this.unlock(balances, order.side === OrderSide.BUY ? market.quoteAsset : market.baseAsset, release);
+        order.balanceLedger.released += release;
+    }
+
+    private maxPerpFillQty(
+        order: Extract<InMarketOrderType, { marketType: MarketType.PERP; }>,
+        requestedQty: bigint,
+        price: bigint,
+        market: Market
+    ) {
+        if (order.reduceOnly) {
+            return requestedQty;
+        }
+
+        const balances = this.getUserBalanceMap(order.userId);
+        const collateral = this.getOrCreateBalance(balances, market.quoteAsset.id);
+        const availableReservation = this.availablePerpOrderReservation(order);
+        const availableCollateral = collateral.total - collateral.locked;
+        const capacity = availableReservation + availableCollateral;
+
+        if (perpMargin(requestedQty, price, order.leverage, market) <= capacity) {
+            return requestedQty;
+        }
+
+        let low = 0n;
+        let high = requestedQty;
+
+        while (low < high) {
+            const mid = (low + high + 1n) / 2n;
+
+            if (perpMargin(mid, price, order.leverage, market) <= capacity) {
+                low = mid;
+            } else {
+                high = mid - 1n;
+            }
+        }
+
+        return this.floorToLotSize(low, market);
+    }
+
+    private floorToLotSize(qty: bigint, market: Market) {
+        const lotSize = parseBigInt(
+            market.lotSize.toString(),
+            market.baseAsset.precision,
+            EVENT_REJECT_CODES.INVALID_LOT_SIZE,
+            "lot size"
+        );
+
+        return lotSize > 0n ? qty - (qty % lotSize) : 0n;
+    }
+
+    private allotPerpFillMargin(
+        order: Extract<InMarketOrderType, { marketType: MarketType.PERP; }>,
+        qty: bigint,
+        price: bigint,
+        market: Market
+    ) {
+        if (order.reduceOnly) {
+            return;
+        }
+
+        const required = perpMargin(qty, price, order.leverage, market);
+        const availableReservation = this.availablePerpOrderReservation(order);
+        const additional = required > availableReservation ? required - availableReservation : 0n;
+
+        if (additional > 0n) {
+            const balances = this.getUserBalanceMap(order.userId);
+            this.lock(balances, market.quoteAsset, additional, EVENT_REJECT_CODES.INSUFFICIENT_MARGIN);
+            order.marginLedger.allotted += additional;
+            order.margin = order.marginLedger.allotted;
+        }
+
+        order.marginLedger.used += required;
+    }
+
+    private availablePerpOrderReservation(order: Extract<InMarketOrderType, { marketType: MarketType.PERP; }>) {
+        return order.marginLedger.allotted - order.marginLedger.used - order.marginLedger.released;
+    }
+
+    private releasePerpOrderReservation(
+        order: Extract<InMarketOrderType, { marketType: MarketType.PERP; }>,
+        balances: BaseBalanceType,
+        market: Market
+    ) {
+        const release = this.availablePerpOrderReservation(order);
+        this.unlock(balances, market.quoteAsset, release);
+        order.marginLedger.released += release;
+    }
+
+    private requiredSpotBuyBalance(
+        order: Extract<InMarketOrderType, { marketType: MarketType.SPOT; }>,
+        qty: bigint,
+        price: bigint,
+        market: Market,
+        maker: boolean
+    ) {
+        const notional = quoteNotional(qty, price, market);
+        return notional + this.fillFee(notional, maker, false);
+    }
+
+    private fillFee(notional: bigint, maker: boolean, liquidation = false) {
+        const basisPoints = liquidation ? 50n : maker ? 1n : 2n;
+        return notional === 0n ? 0n : (notional * basisPoints + 9_999n) / 10_000n;
+    }
+
+    private chargeAvailableQuoteFee(userId: string, market: Market, fee: bigint) {
+        if (fee <= 0n) {
+            return;
+        }
+
+        const balances = this.getUserBalanceMap(userId);
+        const quote = this.getOrCreateBalance(balances, market.quoteAsset.id);
+        const available = quote.total - quote.locked;
+        const charged = available < fee ? available : fee;
+        const deficit = fee - charged;
+        quote.total -= charged;
+
+        if (deficit > 0n) {
+            this.state.insuranceFunds.set(market.id, (this.state.insuranceFunds.get(market.id) ?? 0n) - deficit);
+        }
+
+        this.addCommission(market.id, fee);
+    }
+
+    private addCommission(marketId: MarketId, fee: bigint) {
+        this.state.commissionFunds.set(marketId, (this.state.commissionFunds.get(marketId) ?? 0n) + fee);
     }
 
     private getAsset(assetId: string): Asset {
