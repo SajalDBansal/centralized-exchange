@@ -7,7 +7,11 @@
     "clean": "rm -rf dist",
     "dev": "nodemon --exec \"node -r esbuild-register ./src/index.ts\" -e .ts",
     "lint": "tsc --noEmit && eslint \"src/**/*.ts*\" --max-warnings 0",
-    "start": "node -r esbuild-register ./src/index.ts"
+    "start": "node -r esbuild-register ./src/index.ts",
+    "test": "jest --detectOpenHandles"
+  },
+  "jest": {
+    "preset": "@workspace/jest-presets/node"
   },
   "dependencies": {
     "@workspace/redis-streams": "workspace:*",
@@ -15,14 +19,18 @@
     "cors": "^2.8.5"
   },
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
     "@workspace/database": "workspace:*",
     "@workspace/eslint-config": "workspace:^",
+    "@workspace/jest-presets": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "@types/node": "^20.11.24",
     "esbuild": "^0.20.1",
     "esbuild-register": "^3.5.0",
     "eslint": "^8.57.0",
+    "jest": "^30.2.0",
     "nodemon": "^3.1.0",
+    "ts-jest": "^29.4.6",
     "typescript": "5.5.4"
   }
 }

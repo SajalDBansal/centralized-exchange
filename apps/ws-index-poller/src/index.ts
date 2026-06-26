@@ -61,7 +61,7 @@ function isBinanceCombinedStreamMessage(value: unknown): value is BinanceCombine
             || (Array.isArray(value.data) && value.data.every(isBinanceMarkPrice)));
 }
 
-function parseMarkPriceMessage(rawMessage: string) {
+export function parseMarkPriceMessage(rawMessage: string) {
     const message = JSON.parse(rawMessage) as unknown;
 
     if (Array.isArray(message)) {
@@ -90,7 +90,7 @@ async function publish(type: MarketEvent["type"], payload: MarketEvent["payload"
     });
 }
 
-async function handlePrice(price: BinanceMarkPrice) {
+export async function handlePrice(price: BinanceMarkPrice) {
     const marketId = MARKET_BY_BINANCE_SYMBOL[price.s];
 
     if (!marketId) {
@@ -108,7 +108,7 @@ async function handlePrice(price: BinanceMarkPrice) {
     await publish(EVENT_TO_ENGINE_SUBJECT.INDEX_PRICE_UPDATE, payload);
 }
 
-async function publishFundingSettlements() {
+export async function publishFundingSettlements() {
     for (const [marketId, price] of latestPrices) {
         const payload: FundingSettlePayload = {
             marketId,
@@ -119,6 +119,10 @@ async function publishFundingSettlements() {
 
         await publish(EVENT_TO_ENGINE_SUBJECT.FUNDING_SETTLE, payload);
     }
+}
+
+export function resetLatestPricesForTests() {
+    latestPrices.clear();
 }
 
 function connect() {
@@ -146,12 +150,18 @@ function connect() {
     });
 }
 
-if (!Number.isInteger(FUNDING_INTERVAL_SECONDS) || FUNDING_INTERVAL_SECONDS <= 0) {
-    throw new Error("FUNDING_INTERVAL_SECONDS must be a positive integer");
+export function startIndexPoller() {
+    if (!Number.isInteger(FUNDING_INTERVAL_SECONDS) || FUNDING_INTERVAL_SECONDS <= 0) {
+        throw new Error("FUNDING_INTERVAL_SECONDS must be a positive integer");
+    }
+
+    setInterval(() => {
+        void publishFundingSettlements().catch((error) => console.error("Failed to publish funding settlement", error));
+    }, FUNDING_INTERVAL_SECONDS * 1_000);
+
+    connect();
 }
 
-setInterval(() => {
-    void publishFundingSettlements().catch((error) => console.error("Failed to publish funding settlement", error));
-}, FUNDING_INTERVAL_SECONDS * 1_000);
-
-connect();
+if (process.env.NODE_ENV !== "test") {
+    startIndexPoller();
+}
