@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import {
     EVENT_TO_ENGINE_SUBJECT,
+    EventSource,
     MarketType,
     OrderPosition,
     OrderSide,
@@ -16,6 +17,7 @@ import {
 } from "@workspace/types";
 
 const mockRequest = jest.fn<(subject: unknown, payload?: unknown) => Promise<unknown>>();
+const mockBackendRequest = jest.fn<(event: unknown) => Promise<unknown>>();
 
 const mockPrisma = {
     user: {
@@ -39,6 +41,15 @@ jest.mock("@workspace/nats-streams", () => ({
     },
 }));
 
+jest.mock("../utils/backendResponseRouter", () => ({
+    backendRouter: {
+        backendId: "backend-test",
+        request: mockBackendRequest,
+        startListener: jest.fn(),
+        stop: jest.fn(),
+    },
+}));
+
 jest.mock("@workspace/database", () => ({
     prisma: mockPrisma,
 }));
@@ -46,6 +57,7 @@ jest.mock("@workspace/database", () => ({
 describe("core backend API integration", () => {
     beforeEach(() => {
         mockRequest.mockReset();
+        mockBackendRequest.mockReset();
         Object.values(mockPrisma.user).forEach((mock) => mock.mockReset());
         Object.values(mockPrisma.session).forEach((mock) => mock.mockReset());
         Object.values(mockPrisma.order).forEach((mock) => mock.mockReset());
@@ -277,11 +289,11 @@ describe("core backend API integration", () => {
             },
         },
     ])("creates $name orders with all API flags", async ({ body, expected }) => {
-        mockRequest.mockResolvedValue({
+        mockBackendRequest.mockResolvedValue(engineResult({
             ...success("Order created successfully"),
             userId: "user-1",
             data: { order: { orderId: "order-1" } },
-        });
+        }));
 
         await supertest(buildApp())
             .post("/api/v1/order")
@@ -289,18 +301,19 @@ describe("core backend API integration", () => {
             .send(body)
             .expect(200);
 
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
-            expect.objectContaining({
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
+            payload: expect.objectContaining({
                 ...expected,
                 userId: "user-1",
                 entryPrice: "100",
                 quantity: "1",
                 postOnly: false,
-            })
-        );
-        const payload = mockRequest.mock.calls[0]?.[1] as { createdAt?: unknown };
-        expect(typeof payload.createdAt).toBe("number");
+            }),
+        }));
+        const payload = (mockBackendRequest.mock.calls[0]?.[0] as { payload?: { createdAt?: unknown } })?.payload;
+        expect(typeof payload?.createdAt).toBe("number");
     });
 
     it("rejects invalid order flags before publishing to the engine", async () => {
@@ -318,26 +331,26 @@ describe("core backend API integration", () => {
             success: false,
             type: "VALIDATION_ERROR",
         });
-        expect(mockRequest).not.toHaveBeenCalled();
+        expect(mockBackendRequest).not.toHaveBeenCalled();
     });
 
     it("cancels, fetches, lists open orders, and reads DB order history by authenticated user", async () => {
-        mockRequest
-            .mockResolvedValueOnce({
+        mockBackendRequest
+            .mockResolvedValueOnce(engineResult({
                 ...success("Order canceled successfully"),
                 userId: "user-1",
                 data: { order: { orderId: "order-1" } },
-            })
-            .mockResolvedValueOnce({
+            }))
+            .mockResolvedValueOnce(engineResult({
                 ...success("Order fetched"),
                 userId: "user-1",
                 data: { order: { orderId: "order-1" } },
-            })
-            .mockResolvedValueOnce({
+            }))
+            .mockResolvedValueOnce(engineResult({
                 ...success("Open orders fetched"),
                 userId: "user-1",
                 data: { orders: [{ orderId: "order-2" }] },
-            });
+            }));
         mockPrisma.order.findMany.mockResolvedValue([{ id: "db-order-1" }]);
 
         await supertest(buildApp())
@@ -361,20 +374,29 @@ describe("core backend API integration", () => {
             .expect(200);
 
         expect(history.body.orders).toEqual([{ id: "db-order-1" }]);
-        expect(mockRequest).toHaveBeenNthCalledWith(
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
             1,
-            EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL,
-            { userId: "user-1", orderId: "order-1" }
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL,
+                payload: { userId: "user-1", orderId: "order-1" },
+            })
         );
-        expect(mockRequest).toHaveBeenNthCalledWith(
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
             2,
-            EVENT_TO_ENGINE_SUBJECT.ORDER_GET,
-            { userId: "user-1", orderId: "order-1" }
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.ORDER_GET,
+                payload: { userId: "user-1", orderId: "order-1" },
+            })
         );
-        expect(mockRequest).toHaveBeenNthCalledWith(
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
             3,
-            EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS,
-            { userId: "user-1", marketId: "BTC_INR" }
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS,
+                payload: { userId: "user-1", marketId: "BTC_INR" },
+            })
         );
         expect(mockPrisma.order.findMany).toHaveBeenCalledWith({
             where: { userId: "user-1", marketId: "BTC_INR" },
@@ -496,6 +518,16 @@ function success(message: string) {
         eventId: 1,
         timestamp: 1000,
         message,
+    };
+}
+
+function engineResult(payload: unknown) {
+    return {
+        requestId: "request-1",
+        backendId: "backend-test",
+        success: true,
+        payload,
+        timestamp: 1000,
     };
 }
 

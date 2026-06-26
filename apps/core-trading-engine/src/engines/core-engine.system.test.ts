@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it } from "@jest/globals";
 import {
     EVENT_REJECT_CODES,
     EVENT_TO_ENGINE_SUBJECT,
@@ -14,26 +14,7 @@ import {
 } from "@workspace/types";
 import type { Engine } from "./core-engine";
 
-const mockPublishDatabaseEvent = jest.fn<(...args: unknown[]) => Promise<string>>(
-    () => Promise.resolve("database-event")
-);
-const mockPublishPubSub = jest.fn<(...args: unknown[]) => Promise<number>>(
-    () => Promise.resolve(1)
-);
-
-jest.mock("@workspace/redis-streams", () => ({
-    RedisPublisher: {
-        publishDatabaseEvent: mockPublishDatabaseEvent,
-        publishPubSub: mockPublishPubSub,
-    },
-}));
-
 describe("core engine system flows", () => {
-    beforeEach(() => {
-        mockPublishDatabaseEvent.mockClear();
-        mockPublishPubSub.mockClear();
-    });
-
     it("runs spot limit, market, cancel, depth, and balances through the real engine", async () => {
         const engine = newEngine();
         await addUserWithBalances(engine, "buyer", { INR: "200000" });
@@ -52,6 +33,12 @@ describe("core engine system flows", () => {
             orderId: restingBidOrder.orderId,
         });
         expect(orderFrom(cancel).status).toBe(OrderStatus.CANCELLED);
+        expect((cancel as any).updates.marketData).toEqual([
+            expect.objectContaining({
+                type: "depth.update",
+                data: { bids: [{ price: "90", quantity: "0" }], asks: [] },
+            }),
+        ]);
 
         const maker = await engine.process(EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE, spotOrder({
             userId: "seller",
@@ -101,8 +88,15 @@ describe("core engine system flows", () => {
             locked: "0",
         });
         expect((sellerBalances as any).data.balances.INR.total).toBe("99.99");
-        expect(mockPublishDatabaseEvent).toHaveBeenCalled();
-        expect(mockPublishPubSub).toHaveBeenCalled();
+        expect((taker as any).updates.marketData).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "depth.update" }),
+            expect.objectContaining({ type: "price.update", data: expect.objectContaining({ lastPrice: "100" }) }),
+            expect.objectContaining({ type: "ticker.update" }),
+        ]));
+        expect((taker as any).updates.database).toMatchObject({
+            orders: expect.any(Array),
+            trades: expect.any(Array),
+        });
     });
 
     it("enforces FOK and IOC fill boundaries without resting leftover taker quantity", async () => {

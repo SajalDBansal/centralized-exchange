@@ -1,11 +1,22 @@
 import type { RequestHandler, Request, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { NatsManager } from "@workspace/nats-streams";
-import { CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
+import { CancelOrderReturnPayload, CreateOrderReturnPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersReturnPayload, EVENT_TO_ENGINE_SUBJECT, EventSource, PayloadToBackendType, PayloadToEngineType } from "@workspace/types";
 import { CancelOrGetOrderClientSchema, CreateOrderClientSchema, GetOpenOrdersClientSchema } from "@workspace/validations";
 import { prisma } from "@workspace/database";
+import { backendRouter } from "../utils/backendResponseRouter";
 
-const natsPromise = NatsManager.getInstance();
+async function requestEngine<TResponse extends PayloadToBackendType>(
+    type: EVENT_TO_ENGINE_SUBJECT,
+    payload: PayloadToEngineType
+): Promise<TResponse> {
+    const result = await backendRouter.request({
+        source: EventSource.BACKEND,
+        type,
+        payload,
+    });
+
+    return result.payload as TResponse;
+}
 
 export const createOrder: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
@@ -20,9 +31,7 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     const { marketId, entryPrice, quantity, side, position, leverage, type, postOnly, marketType, reduceOnly, stpMode, timeInForce } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<CreateOrderReturnPayload, CreateOrderPayload>(
+    const res = await requestEngine<CreateOrderReturnPayload>(
         EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
         {
             entryPrice, quantity, userId, marketId,
@@ -55,9 +64,7 @@ export const cancelOrder: RequestHandler = async (request: Request, response: Re
 
     const { orderId } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<CancelOrderReturnPayload, CancelOrderPayload>(
+    const res = await requestEngine<CancelOrderReturnPayload>(
         EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL,
         { userId, orderId }
     );
@@ -84,9 +91,7 @@ export const getAllOrderById: RequestHandler = async (request: Request, response
 
     const { orderId } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<GetOrderByIdReturnPayload, GetOrderByIdPayload>(
+    const res = await requestEngine<GetOrderByIdReturnPayload>(
         EVENT_TO_ENGINE_SUBJECT.ORDER_GET,
         { orderId, userId }
     );
@@ -113,9 +118,7 @@ export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, 
 
     const { marketId } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<GetUserOpenOrdersReturnPayload, GetUserOpenOrdersPayload>(
+    const res = await requestEngine<GetUserOpenOrdersReturnPayload>(
         EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS,
         { userId, marketId }
     );

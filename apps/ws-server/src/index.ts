@@ -23,10 +23,10 @@ let redisSubscription: RedisMarketDataSubscription | undefined;
 connectRedisMarketDataSubscriber(gateway)
     .then((subscription) => {
         redisSubscription = subscription;
-        console.log(`Subscribed to Redis market data channel`);
+        console.log(`Subscribed to Redis engine result stream`);
     })
     .catch((error) => {
-        console.error("Failed to subscribe to Redis market data channel", error);
+        console.error("Failed to subscribe to Redis engine result stream", error);
     });
 
 server.listen(port, () => {
@@ -35,7 +35,7 @@ server.listen(port, () => {
 
 const shutdown = async () => {
     await redisSubscription?.close().catch((error) => {
-        console.error("Failed to close Redis market data subscription", error);
+        console.error("Failed to close Redis engine result subscription", error);
     });
 
     await gateway.close().catch((error) => {

@@ -22,7 +22,7 @@ export class BackendResponseRouter {
         this.isRunning = true;
 
         const redis = await RedisManager.createBlockingConnection(`response:${this.backendId}`);
-        const streamKey = REDIS_STREAMS.backendResponse(this.backendId);
+        const streamKey = REDIS_STREAMS.ENGINE_RESULT;
 
         console.log(`[ResponseRouter] Starting listener on stream: ${streamKey}`);
 
@@ -49,7 +49,12 @@ export class BackendResponseRouter {
                                 if (typeof raw === "string") {
                                     const event: TradeResultEvent = JSON.parse(raw);
 
-                                    // Match requestId and resolve pending controller
+                                    // Match only responses intended for this backend process.
+                                    if (event.backendId !== this.backendId) {
+                                        lastId = message.id;
+                                        continue;
+                                    }
+
                                     const pending = this.responseMap.get(event.requestId);
                                     if (pending) {
                                         clearTimeout(pending.timeoutId);

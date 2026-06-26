@@ -10,7 +10,7 @@ import {
     TimeInForce,
     UserId,
 } from "./base";
-import { IncomingEventTypes } from "./nats-types";
+import type { IncomingEventTypes } from "./nats-types";
 
 export type DatabaseAssetRecord = {
     id: string;
@@ -78,6 +78,36 @@ export type DatabaseTradeRecord = {
     createdAt: number;
 };
 
+export type DatabaseTickerInterval = "1m" | "15m" | "1h" | "1w";
+
+export type DatabaseTickerRecord = {
+    marketId: MarketId;
+    lastPrice: string;
+    priceChange24h: string;
+    priceChangePercent24h: string;
+    high24h: string;
+    low24h: string;
+    volume24h: string;
+    quoteVolume24h: string;
+    engineTradeId: string;
+    updatedAt: number;
+};
+
+export type DatabaseTickerCandleRecord = {
+    marketId: MarketId;
+    interval: DatabaseTickerInterval;
+    bucketStart: number;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+    quoteVolume: string;
+    tradeCount: number;
+    engineTradeId: string;
+    updatedAt: number;
+};
+
 export type DatabaseAssetTransactionRecord = {
     id: string;
     userId: UserId;
@@ -133,6 +163,8 @@ export type DatabaseWritePayload = {
     markets?: DatabaseMarketRecord[];
     orders?: DatabaseOrderRecord[];
     trades?: DatabaseTradeRecord[];
+    tickers?: DatabaseTickerRecord[];
+    tickerCandles?: DatabaseTickerCandleRecord[];
     assetTransactions?: DatabaseAssetTransactionRecord[];
     fundingSettlements?: DatabaseFundingSettlementRecord[];
     fundingPayments?: DatabaseFundingPaymentRecord[];

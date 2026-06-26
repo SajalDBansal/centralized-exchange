@@ -1,4 +1,3 @@
-import { RedisPublisher } from "@workspace/redis-streams";
 import {
     Asset,
     DatabaseAssetRecord,
@@ -14,7 +13,6 @@ import {
     FundingPayment,
     FundingSettlePayload,
     FundingSettleReturnPayload,
-    IncomingEventTypes,
     InMarketOrderType,
     Market,
     MarketType,
@@ -35,6 +33,8 @@ function emptyBucket(): DatabaseWriteBucket {
         markets: [],
         orders: [],
         trades: [],
+        tickers: [],
+        tickerCandles: [],
         assetTransactions: [],
         fundingSettlements: [],
         fundingPayments: [],
@@ -51,8 +51,10 @@ export class DatabaseManager {
 
     captureOrder(order: InMarketOrderType, market?: Market) {
         this.captureMarketContext(market, order.marketType);
-        this.pending.orders.push(this.toOrderRecord(order, market));
-        this.pending.trades.push(...this.toTradeRecords(normalizeOrderReturn(order, market).fills));
+        const normalized = normalizeOrderReturn(order, market);
+
+        this.pending.orders.push(this.toOrderRecord(order, market, normalized));
+        this.pending.trades.push(...this.toTradeRecords(normalized.fills));
     }
 
     captureOrders(orders: Iterable<InMarketOrderType>, market?: Market) {
@@ -140,19 +142,8 @@ export class DatabaseManager {
         });
     }
 
-    async publish(sourceEventType: IncomingEventTypes, eventId: number, timestamp: number) {
-        const payload = this.compact();
-
-        if (!payload) {
-            return;
-        }
-
-        await RedisPublisher.publishDatabaseEvent({
-            eventId,
-            sourceEventType,
-            timestamp,
-            payload,
-        });
+    drainPayload() {
+        return this.compact();
     }
 
     private compact(): DatabaseWritePayload | undefined {
@@ -226,8 +217,11 @@ export class DatabaseManager {
         };
     }
 
-    private toOrderRecord(order: InMarketOrderType, market?: Market): DatabaseOrderRecord {
-        const normalized = normalizeOrderReturn(order, market);
+    private toOrderRecord(
+        order: InMarketOrderType,
+        market?: Market,
+        normalized = normalizeOrderReturn(order, market)
+    ): DatabaseOrderRecord {
         const filledAt = order.status === OrderStatus.FILLED ? Date.now() : undefined;
         const cancelledAt = order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REJECTED ? Date.now() : undefined;
 

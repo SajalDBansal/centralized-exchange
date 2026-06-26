@@ -105,23 +105,25 @@ model Session {
 }
 
 model Market {
-  id                 String              @id
-  name               String              @unique
-  marketType         MarketType          @default(SPOT)
+  id                 String               @id
+  name               String               @unique
+  marketType         MarketType           @default(SPOT)
   baseAssetId        String
   quoteAssetId       String
-  baseAsset          Asset               @relation("BaseAsset", fields: [baseAssetId], references: [id])
-  quoteAsset         Asset               @relation("QuoteAsset", fields: [quoteAssetId], references: [id])
-  maxLeverage        Int                 @default(1)
+  baseAsset          Asset                @relation("BaseAsset", fields: [baseAssetId], references: [id])
+  quoteAsset         Asset                @relation("QuoteAsset", fields: [quoteAssetId], references: [id])
+  maxLeverage        Int                  @default(1)
   minQty             String
   tickSize           String
   lotSize            String
   minNotional        String
-  active             Boolean             @default(true)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  active             Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
   orders             Order[]
   trades             Trade[]
+  ticker             MarketTicker?
+  tickerCandles      MarketTickerCandle[]
   fundingSettlements FundingSettlement[]
   fundingPayments    FundingPayment[]
   liquidationEvents  LiquidationEvent[]
@@ -213,6 +215,42 @@ model Trade {
   @@index([takerOrderId])
   @@index([makerUserId])
   @@index([takerUserId])
+}
+
+model MarketTicker {
+  marketId              String   @id
+  lastPrice             String
+  priceChange24h        String   @default("0")
+  priceChangePercent24h String   @default("0")
+  high24h               String
+  low24h                String
+  volume24h             String   @default("0")
+  quoteVolume24h        String   @default("0")
+  lastTradeId           BigInt?
+  updatedAt             DateTime @updatedAt
+  market                Market   @relation(fields: [marketId], references: [id])
+
+  @@index([updatedAt])
+}
+
+model MarketTickerCandle {
+  marketId    String
+  interval    String
+  bucketStart DateTime
+  open        String
+  high        String
+  low         String
+  close       String
+  volume      String   @default("0")
+  quoteVolume String   @default("0")
+  tradeCount  Int      @default(0)
+  lastTradeId BigInt?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  market      Market   @relation(fields: [marketId], references: [id])
+
+  @@id([marketId, interval, bucketStart])
+  @@index([marketId, interval, bucketStart])
 }
 
 model AssetTransaction {

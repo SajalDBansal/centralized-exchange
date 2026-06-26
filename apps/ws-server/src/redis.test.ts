@@ -1,75 +1,145 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import {
-    MARKET_DATA_REDIS_CHANNEL,
+    CONSUMER_GROUPS,
+    CONSUMERS,
+    EVENT_TO_ENGINE_SUBJECT,
+    REDIS_STREAMS,
     type MarketDataEvent,
-    serializeMarketDataEvent,
     type PriceUpdateEvent,
+    type TradeResultEvent,
 } from "@workspace/types";
 
-const mockSubscribe = jest.fn<(channel: string, listener: (message: string) => void) => Promise<void>>();
-const mockUnsubscribe = jest.fn<(...args: unknown[]) => Promise<void>>();
-const mockQuit = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockInitializeStreams = jest.fn<() => Promise<void>>();
+const mockXReadGroup = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const mockXAck = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockQuit = jest.fn<() => Promise<void>>();
 const mockCreateBlockingConnection = jest.fn<(...args: unknown[]) => Promise<{
-    subscribe: typeof mockSubscribe;
-    unsubscribe: typeof mockUnsubscribe;
+    xReadGroup: typeof mockXReadGroup;
     quit: typeof mockQuit;
+}>>();
+const mockGetInstance = jest.fn<() => Promise<{
+    xAck: typeof mockXAck;
 }>>();
 
 jest.mock("@workspace/redis-streams", () => ({
+    initializeStreams: mockInitializeStreams,
     RedisManager: {
         createBlockingConnection: mockCreateBlockingConnection,
+        getInstance: mockGetInstance,
     },
 }));
 
-describe("redis market data subscriber", () => {
+describe("redis engine result subscriber", () => {
     beforeEach(() => {
-        mockSubscribe.mockReset();
-        mockUnsubscribe.mockReset();
+        mockInitializeStreams.mockReset();
+        mockXReadGroup.mockReset();
+        mockXAck.mockReset();
         mockQuit.mockReset();
         mockCreateBlockingConnection.mockReset();
+        mockGetInstance.mockReset();
+
+        mockInitializeStreams.mockResolvedValue(undefined);
         mockCreateBlockingConnection.mockResolvedValue({
-            subscribe: mockSubscribe,
-            unsubscribe: mockUnsubscribe,
+            xReadGroup: mockXReadGroup,
             quit: mockQuit,
         });
+        mockGetInstance.mockResolvedValue({ xAck: mockXAck });
+        mockXAck.mockResolvedValue(undefined);
+        mockQuit.mockResolvedValue(undefined);
     });
 
-    it("bridges valid Redis pub/sub messages into the websocket gateway", async () => {
+    it("bridges market data updates from the engine result stream into the websocket gateway", async () => {
         const { connectRedisMarketDataSubscriber } = require("./redis") as typeof import("./redis");
         const publishToLocalClients = jest.fn<(event: MarketDataEvent) => number>(() => 1);
-
-        await connectRedisMarketDataSubscriber({ publishToLocalClients });
-
-        expect(mockCreateBlockingConnection).toHaveBeenCalledWith("market-data-pubsub");
-        expect(mockSubscribe).toHaveBeenCalledWith(MARKET_DATA_REDIS_CHANNEL, expect.any(Function));
-
-        const listener = mockSubscribe.mock.calls[0]?.[1];
-        expect(listener).toBeDefined();
-
         const event: PriceUpdateEvent = {
             type: "price.update",
             stream: "price",
             marketId: "BTC_INR",
             eventTs: Date.now(),
-            data: { lastPrice: "100" },
+            tradeId: "1",
+            data: { lastPrice: "100", lastQuantity: "1" },
         };
 
-        listener?.(serializeMarketDataEvent(event));
-        listener?.("not-json");
+        mockXReadGroup
+            .mockResolvedValueOnce([{
+                messages: [{
+                    id: "1-0",
+                    message: { data: JSON.stringify(resultWithMarketData([event])) },
+                }],
+            }])
+            .mockResolvedValue(null);
 
-        expect(publishToLocalClients).toHaveBeenCalledTimes(1);
-        expect(publishToLocalClients).toHaveBeenCalledWith(event);
-    });
+        const subscription = await connectRedisMarketDataSubscriber({ publishToLocalClients });
+        await eventually(() => expect(publishToLocalClients).toHaveBeenCalledWith(event));
 
-    it("closes the Redis subscription", async () => {
-        const { connectRedisMarketDataSubscriber } = require("./redis") as typeof import("./redis");
-        const subscription = await connectRedisMarketDataSubscriber({
-            publishToLocalClients: jest.fn<(event: MarketDataEvent) => number>(() => 1),
-        });
+        expect(mockInitializeStreams).toHaveBeenCalled();
+        expect(mockCreateBlockingConnection).toHaveBeenCalledWith(
+            expect.stringContaining(`${REDIS_STREAMS.ENGINE_RESULT}:${CONSUMER_GROUPS.WS_SERVER}:${CONSUMERS.WS_SERVER}`)
+        );
+        expect(mockXReadGroup).toHaveBeenCalledWith(
+            CONSUMER_GROUPS.WS_SERVER,
+            expect.stringContaining(CONSUMERS.WS_SERVER),
+            [{ key: REDIS_STREAMS.ENGINE_RESULT, id: ">" }],
+            { BLOCK: 1_000, COUNT: 100 }
+        );
+        expect(mockXAck).toHaveBeenCalledWith(REDIS_STREAMS.ENGINE_RESULT, CONSUMER_GROUPS.WS_SERVER, "1-0");
 
         await subscription.close();
-
-        expect(mockUnsubscribe).toHaveBeenCalledWith(MARKET_DATA_REDIS_CHANNEL);
         expect(mockQuit).toHaveBeenCalled();
     });
+
+    it("ignores result messages without market data updates", async () => {
+        const { connectRedisMarketDataSubscriber } = require("./redis") as typeof import("./redis");
+        const publishToLocalClients = jest.fn<(event: MarketDataEvent) => number>(() => 1);
+
+        mockXReadGroup
+            .mockResolvedValueOnce([{
+                messages: [{
+                    id: "1-0",
+                    message: { data: JSON.stringify(resultWithMarketData([])) },
+                }],
+            }])
+            .mockResolvedValue(null);
+
+        const subscription = await connectRedisMarketDataSubscriber({ publishToLocalClients });
+        await eventually(() => expect(mockXAck).toHaveBeenCalledWith(REDIS_STREAMS.ENGINE_RESULT, CONSUMER_GROUPS.WS_SERVER, "1-0"));
+
+        expect(publishToLocalClients).not.toHaveBeenCalled();
+        await subscription.close();
+    });
 });
+
+function resultWithMarketData(marketData: MarketDataEvent[]): TradeResultEvent {
+    return {
+        requestId: "request-1",
+        backendId: "backend-1",
+        sourceEventType: EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
+        success: true,
+        payload: {
+            success: true,
+            message: "ok",
+            eventId: 1,
+            timestamp: Date.now(),
+            updates: { marketData },
+        },
+        updates: { marketData },
+        timestamp: Date.now(),
+    };
+}
+
+async function eventually(assertion: () => void) {
+    const startedAt = Date.now();
+    let lastError: unknown;
+
+    while (Date.now() - startedAt < 1_000) {
+        try {
+            assertion();
+            return;
+        } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+    }
+
+    throw lastError;
+}

@@ -11,7 +11,7 @@ import { SingleMarketPositions } from "./single-market-positions";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseManager } from "../utils/database-manager";
-import { buildIndexPriceMarketDataEvents, buildOrderMarketDataEvents, publishMarketDataEvents } from "../utils/market-data-publisher";
+import { buildIndexPriceMarketDataEvents, buildOrderMarketDataEvents, MarketTickerAggregator } from "../utils/market-data-publisher";
 
 // Data Store for the engine.
 export class EngineState {
@@ -56,6 +56,8 @@ export class Engine {
 
     private readonly databaseManager: DatabaseManager;
 
+    private readonly tickerAggregator: MarketTickerAggregator;
+
     private readonly snapshotPath: string;
 
     constructor(snapshotPath = process.env.ENGINE_SNAPSHOT_PATH || join(process.cwd(), "snapshots", "core-engine.snapshot.txt")) {
@@ -77,6 +79,8 @@ export class Engine {
         this.marketEngine = new MarketEngine(this.state, this.balanceEngine, this.positionEngine);
 
         this.databaseManager = new DatabaseManager();
+
+        this.tickerAggregator = new MarketTickerAggregator();
 
         if (!this.loadSnapshot()) {
             this.marketEngine.initializeMarkets();
@@ -166,11 +170,14 @@ export class Engine {
             }
 
             if (result.success) {
+                const marketDataEvents = this.buildRealtimeMarketData(subject, result);
+                const databasePayload = this.databaseManager.drainPayload();
+
+                result.updates = {
+                    ...(marketDataEvents.length > 0 ? { marketData: marketDataEvents } : {}),
+                    ...(databasePayload ? { database: databasePayload } : {}),
+                };
                 this.saveSnapshot();
-                await this.databaseManager.publish(subject, result.eventId, result.timestamp)
-                    .catch((error) => console.error("Failed to publish database events", error));
-                await this.publishRealtimeMarketData(subject, result)
-                    .catch((error) => console.error("Failed to publish market data events", error));
             }
 
             return result;
@@ -513,12 +520,9 @@ export class Engine {
         return (++this.eventSequenceId);
     }
 
-    private publishRealtimeMarketData = async (
-        subject: IncomingEventTypes,
-        result: PayloadToBackendType
-    ) => {
+    private buildRealtimeMarketData = (subject: IncomingEventTypes, result: PayloadToBackendType) => {
         if (!result.success) {
-            return;
+            return [];
         }
 
         if (
@@ -528,20 +532,20 @@ export class Engine {
             const order = (result as CreateOrderReturnPayload | CancelOrderReturnPayload).data?.order;
 
             if (!order) {
-                return;
+                return [];
             }
 
-            const { depths } = this.matchingEngine.getMarketDepth({ marketId: order.marketId });
-            await publishMarketDataEvents(buildOrderMarketDataEvents(
+            return buildOrderMarketDataEvents(
                 result as CreateOrderReturnPayload | CancelOrderReturnPayload,
-                depths
-            ));
-            return;
+                this.tickerAggregator
+            );
         }
 
         if (subject === EVENT_TO_ENGINE_SUBJECT.INDEX_PRICE_UPDATE) {
-            await publishMarketDataEvents(buildIndexPriceMarketDataEvents(result as IndexPriceUpdateReturnPayload));
+            return buildIndexPriceMarketDataEvents(result as IndexPriceUpdateReturnPayload);
         }
+
+        return [];
     };
 
     private getMarketById = (payload: GetMarketByIdPayload): GetMarketByIdReturnPayload => {
@@ -1132,4 +1136,3 @@ export class Engine {
         return BigInt(value);
     }
 }
-

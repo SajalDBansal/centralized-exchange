@@ -1,5 +1,7 @@
 import { Asset, DepthType, FillType, Market, MarketId, MarketType, OrderId, OrderStatus, ReturnBalanceType, UserId } from "./base";
+import type { DatabaseWritePayload } from "./database-types";
 import { MarketsType } from "./engine";
+import type { MarketDataEvent } from "./market-data";
 import { EVENT_REJECT_CODES } from "./oms";
 import { IncomingOrderType, InMarketOrderType, NormalizeOrderReturnType } from "./spot";
 
@@ -167,7 +169,13 @@ export interface BaseReturnPayload {
     eventId: number;
     timestamp: number;
     code?: EVENT_REJECT_CODES;
+    updates?: EngineReturnUpdates;
 }
+
+export type EngineReturnUpdates = {
+    marketData?: MarketDataEvent[];
+    database?: DatabaseWritePayload;
+};
 
 export interface BaseReturnPayloadWithUser extends BaseReturnPayload {
     userId: string;

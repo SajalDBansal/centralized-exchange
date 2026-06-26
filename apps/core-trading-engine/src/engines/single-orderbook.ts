@@ -123,6 +123,8 @@ export class SingleMarketOrderBook {
 
         level.remove(node);
 
+        this.recordDepthChange(order, order.side, order.entryPrice, level.totalQty);
+
         this.orderMap.delete(order.orderId);
 
         this.globalOrderMap.delete(order.orderId);
@@ -176,7 +178,7 @@ export class SingleMarketOrderBook {
             return;
         }
 
-        this.restOrder(order);
+        this.restOrder(order, false);
     }
 
     private match(taker: InMarketOrderType) {
@@ -284,6 +286,8 @@ export class SingleMarketOrderBook {
                     maker.status = OrderStatus.PARTIAL_FILLED;
                 }
 
+                this.recordDepthChange(taker, maker.side, bestPrice, level.totalQty);
+
                 if (prepared.reservationRejected) {
                     reservationRejected = true;
                     current = null;
@@ -339,7 +343,7 @@ export class SingleMarketOrderBook {
         return taker;
     }
 
-    private restOrder(order: InMarketOrderType) {
+    private restOrder(order: InMarketOrderType, shouldTrackDepth = true) {
         const levels = order.side === OrderSide.BUY ? this.bids : this.asks;
 
         let tree = order.side === OrderSide.BUY ? this.bidTree : this.askTree;
@@ -361,6 +365,10 @@ export class SingleMarketOrderBook {
         }
 
         const node = level.append(order);
+
+        if (shouldTrackDepth) {
+            this.recordDepthChange(order, order.side, order.entryPrice, level.totalQty);
+        }
 
         this.orderMap.set(order.orderId, node);
 
@@ -477,6 +485,7 @@ export class SingleMarketOrderBook {
                 maker.status = OrderStatus.CANCELLED;
                 this.autoCancelledOrders.push(maker);
                 level.remove(makerNode);
+                this.recordDepthChange(taker, maker.side, maker.entryPrice, level.totalQty);
                 this.orderMap.delete(maker.orderId);
                 this.globalOrderMap.delete(maker.orderId);
                 this.globalOrders.delete(maker.orderId);
@@ -488,6 +497,7 @@ export class SingleMarketOrderBook {
                 maker.status = OrderStatus.CANCELLED;
                 this.autoCancelledOrders.push(maker);
                 level.remove(makerNode);
+                this.recordDepthChange(taker, maker.side, maker.entryPrice, level.totalQty);
                 this.orderMap.delete(maker.orderId);
                 this.globalOrderMap.delete(maker.orderId);
                 this.globalOrders.delete(maker.orderId);
@@ -581,6 +591,22 @@ export class SingleMarketOrderBook {
         if (orders.size === 0) {
             this.userOrders.delete(userId);
         }
+    }
+
+    private recordDepthChange(order: InMarketOrderType, side: OrderSide, price: bigint, quantity: bigint) {
+        const depths = side === OrderSide.BUY ? order.depths.bids : order.depths.asks;
+        const priceKey = price.toString();
+        const existing = depths.find(depth => depth.price === priceKey);
+
+        if (existing) {
+            existing.quantity = quantity.toString();
+            return;
+        }
+
+        depths.push({
+            price: priceKey,
+            quantity: quantity.toString(),
+        });
     }
 
     private reject(code: EVENT_REJECT_CODES, message: string): never {

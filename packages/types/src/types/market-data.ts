@@ -1,11 +1,11 @@
 import type { DepthType, MarketId } from "./base";
 
-export const MARKET_DATA_REDIS_CHANNEL = "market-data:events";
-
 export type MarketStream = "ticker" | "price" | "depth";
 
 export type TickerData = {
     lastPrice: string;
+    lastQuantity?: string;
+    lastQuoteVolume?: string;
     priceChange24h: string;
     priceChangePercent24h: string;
     high24h: string;
@@ -16,6 +16,7 @@ export type TickerData = {
 
 export type PriceData = {
     lastPrice: string;
+    lastQuantity?: string;
     markPrice?: string;
     indexPrice?: string;
 };
@@ -30,6 +31,7 @@ export type TickerUpdateEvent = {
     stream: "ticker";
     marketId: MarketId;
     eventTs: number;
+    tradeId?: string;
     data: TickerData;
 };
 
@@ -38,6 +40,7 @@ export type PriceUpdateEvent = {
     stream: "price";
     marketId: MarketId;
     eventTs: number;
+    tradeId?: string;
     data: PriceData;
 };
 

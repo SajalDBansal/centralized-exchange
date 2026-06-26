@@ -1,9 +1,22 @@
-# create -  docker compose -f docker/docker-compose.dev.yml up -d 
+# create -  docker compose -f docker/docker-compose.dev.yml up -d
 version: "3.8"
 
 name: shared-pg
 
 services:
+  db-time:
+    image: timescale/timescaledb:latest-pg16
+    container_name: shared-postgres-timescale
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgresTimescale
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_NAME: local
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgtimedata:/var/lib/postgresql/data
+
   db:
     image: postgres:16
     container_name: shared-postgres
@@ -36,6 +49,7 @@ services:
       - natsdata:/data
 
 volumes:
+  pgtimedata:
   pgdata:
   redisdata:
   natsdata:

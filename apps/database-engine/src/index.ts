@@ -22,10 +22,16 @@ import {
     DatabaseLiquidationEventRecord,
     DatabaseMarketRecord,
     DatabaseOrderRecord,
-    DatabaseStreamEvent,
+    DatabaseTickerCandleRecord,
+    DatabaseTickerInterval,
+    DatabaseTickerRecord,
     DatabaseTradeRecord,
+    DatabaseWritePayload,
+    MarketDataEvent,
     REDIS_STREAMS,
+    TickerUpdateEvent,
     TimeInForce,
+    TradeResultEvent,
 } from "@workspace/types";
 
 type RedisStreamMessage = {
@@ -37,13 +43,31 @@ type RedisStreamMessage = {
 
 const BATCH_SIZE = Number(process.env.DATABASE_ENGINE_BATCH_SIZE ?? 100);
 const BLOCK_TIME_MS = Number(process.env.DATABASE_ENGINE_BLOCK_TIME_MS ?? 1_000);
+const TICKER_CANDLE_INTERVALS: Array<{ interval: DatabaseTickerInterval; durationMs: number }> = [
+    { interval: "1m", durationMs: 60_000 },
+    { interval: "15m", durationMs: 15 * 60_000 },
+    { interval: "1h", durationMs: 60 * 60_000 },
+    { interval: "1w", durationMs: 7 * 24 * 60 * 60_000 },
+];
+
+type DatabasePersistenceEvent = {
+    payload: DatabaseWritePayload;
+};
 
 function byId<T extends { id: string }>(records: T[]) {
-    return Array.from(new Map(records.map((record) => [record.id, record])).values());
+    return byKey(records, (record) => record.id);
+}
+
+function byKey<T>(records: T[], getKey: (record: T) => string) {
+    return Array.from(new Map(records.map((record) => [getKey(record), record])).values());
 }
 
 function toDate(timestamp?: number) {
     return typeof timestamp === "number" ? new Date(timestamp) : undefined;
+}
+
+function requiredDate(timestamp: number) {
+    return new Date(timestamp);
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(record: T): T {
@@ -97,12 +121,17 @@ function toPrismaAssetTransactionStatus(value: DatabaseAssetTransactionRecord["s
     return PrismaAssetTransactionStatus[value];
 }
 
-function collect(events: DatabaseStreamEvent[]) {
+function collect(events: DatabasePersistenceEvent[]) {
     return {
         assets: byId(events.flatMap((event) => event.payload.assets ?? [])),
         markets: byId(events.flatMap((event) => event.payload.markets ?? [])),
         orders: byId(events.flatMap((event) => event.payload.orders ?? [])),
         trades: byId(events.flatMap((event) => event.payload.trades ?? [])),
+        tickers: byKey(events.flatMap((event) => event.payload.tickers ?? []), (ticker) => ticker.marketId),
+        tickerCandles: byKey(
+            events.flatMap((event) => event.payload.tickerCandles ?? []),
+            (candle) => `${candle.marketId}:${candle.interval}:${candle.bucketStart}:${candle.engineTradeId}`
+        ),
         assetTransactions: byId(events.flatMap((event) => event.payload.assetTransactions ?? [])),
         fundingSettlements: byId(events.flatMap((event) => event.payload.fundingSettlements ?? [])),
         fundingPayments: byId(events.flatMap((event) => event.payload.fundingPayments ?? [])),
@@ -315,7 +344,110 @@ async function createAppendOnlyRecords(records: ReturnType<typeof collect>) {
     ]);
 }
 
-async function persistDatabaseEvents(events: DatabaseStreamEvent[]) {
+async function upsertTickers(tickers: DatabaseTickerRecord[]) {
+    if (tickers.length === 0) {
+        return;
+    }
+
+    await prisma.$transaction(
+        tickers.map((ticker) => prisma.$executeRaw`
+            INSERT INTO "MarketTicker" (
+                "marketId",
+                "lastPrice",
+                "priceChange24h",
+                "priceChangePercent24h",
+                "high24h",
+                "low24h",
+                "volume24h",
+                "quoteVolume24h",
+                "lastTradeId",
+                "updatedAt"
+            )
+            VALUES (
+                ${ticker.marketId},
+                ${ticker.lastPrice},
+                ${ticker.priceChange24h},
+                ${ticker.priceChangePercent24h},
+                ${ticker.high24h},
+                ${ticker.low24h},
+                ${ticker.volume24h},
+                ${ticker.quoteVolume24h},
+                ${BigInt(ticker.engineTradeId)},
+                ${requiredDate(ticker.updatedAt)}
+            )
+            ON CONFLICT ("marketId") DO UPDATE SET
+                "lastPrice" = EXCLUDED."lastPrice",
+                "priceChange24h" = EXCLUDED."priceChange24h",
+                "priceChangePercent24h" = EXCLUDED."priceChangePercent24h",
+                "high24h" = EXCLUDED."high24h",
+                "low24h" = EXCLUDED."low24h",
+                "volume24h" = EXCLUDED."volume24h",
+                "quoteVolume24h" = EXCLUDED."quoteVolume24h",
+                "lastTradeId" = EXCLUDED."lastTradeId",
+                "updatedAt" = EXCLUDED."updatedAt"
+            WHERE "MarketTicker"."lastTradeId" IS NULL
+                OR "MarketTicker"."lastTradeId" < EXCLUDED."lastTradeId"
+        `)
+    );
+}
+
+async function upsertTickerCandles(candles: DatabaseTickerCandleRecord[]) {
+    if (candles.length === 0) {
+        return;
+    }
+
+    await prisma.$transaction(
+        candles.map((candle) => prisma.$executeRaw`
+            INSERT INTO "MarketTickerCandle" (
+                "marketId",
+                "interval",
+                "bucketStart",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "quoteVolume",
+                "tradeCount",
+                "lastTradeId",
+                "updatedAt"
+            )
+            VALUES (
+                ${candle.marketId},
+                ${candle.interval},
+                ${requiredDate(candle.bucketStart)},
+                ${candle.open},
+                ${candle.high},
+                ${candle.low},
+                ${candle.close},
+                ${candle.volume},
+                ${candle.quoteVolume},
+                ${candle.tradeCount},
+                ${BigInt(candle.engineTradeId)},
+                ${requiredDate(candle.updatedAt)}
+            )
+            ON CONFLICT ("marketId", "interval", "bucketStart") DO UPDATE SET
+                "high" = CASE
+                    WHEN EXCLUDED."high"::numeric > "MarketTickerCandle"."high"::numeric THEN EXCLUDED."high"
+                    ELSE "MarketTickerCandle"."high"
+                END,
+                "low" = CASE
+                    WHEN EXCLUDED."low"::numeric < "MarketTickerCandle"."low"::numeric THEN EXCLUDED."low"
+                    ELSE "MarketTickerCandle"."low"
+                END,
+                "close" = EXCLUDED."close",
+                "volume" = ("MarketTickerCandle"."volume"::numeric + EXCLUDED."volume"::numeric)::text,
+                "quoteVolume" = ("MarketTickerCandle"."quoteVolume"::numeric + EXCLUDED."quoteVolume"::numeric)::text,
+                "tradeCount" = "MarketTickerCandle"."tradeCount" + EXCLUDED."tradeCount",
+                "lastTradeId" = EXCLUDED."lastTradeId",
+                "updatedAt" = EXCLUDED."updatedAt"
+            WHERE "MarketTickerCandle"."lastTradeId" IS NULL
+                OR "MarketTickerCandle"."lastTradeId" < EXCLUDED."lastTradeId"
+        `)
+    );
+}
+
+async function persistDatabaseEvents(events: DatabasePersistenceEvent[]) {
     if (events.length === 0) {
         return;
     }
@@ -326,24 +458,106 @@ async function persistDatabaseEvents(events: DatabaseStreamEvent[]) {
     await upsertMarkets(records.markets);
     await upsertOrders(records.orders);
     await createAppendOnlyRecords(records);
+    await upsertTickers(records.tickers);
+    await upsertTickerCandles(records.tickerCandles);
 
     console.log(
-        `Persisted database batch: events=${events.length}, orders=${records.orders.length}, trades=${records.trades.length}`
+        `Persisted database batch: events=${events.length}, orders=${records.orders.length}, trades=${records.trades.length}, tickers=${records.tickers.length}, tickerCandles=${records.tickerCandles.length}`
     );
 }
 
 async function ack(redis: Awaited<ReturnType<typeof RedisManager.getInstance>>, messageIds: string[]) {
-    await Promise.all(messageIds.map((id) => redis.xAck(REDIS_STREAMS.DATABASE_EVENT, CONSUMER_GROUPS.DATABASE_ENGINE, id)));
+    await Promise.all(messageIds.map((id) => redis.xAck(REDIS_STREAMS.ENGINE_RESULT, CONSUMER_GROUPS.DATABASE_ENGINE, id)));
 }
 
-function parseMessage(message: RedisStreamMessage) {
+function parseMessage(message: RedisStreamMessage): DatabasePersistenceEvent | null {
     const raw = message.message.data;
 
     if (typeof raw !== "string") {
-        throw new Error("Invalid database stream message data");
+        throw new Error("Invalid engine result stream message data");
     }
 
-    return JSON.parse(raw) as DatabaseStreamEvent;
+    return resultToDatabaseEvent(JSON.parse(raw) as TradeResultEvent);
+}
+
+function resultToDatabaseEvent(result: TradeResultEvent): DatabasePersistenceEvent | null {
+    const databasePayload = result.updates?.database ?? result.payload?.updates?.database;
+    const marketData = result.updates?.marketData ?? result.payload?.updates?.marketData ?? [];
+    const tickerEvents = marketData.filter(isTickerTradeUpdate);
+    const payload: DatabaseWritePayload = {
+        ...(databasePayload ?? {}),
+        ...(tickerEvents.length > 0
+            ? { tickers: tickerEvents.map(tickerRecordFromEvent) }
+            : {}),
+        ...(tickerEvents.length > 0
+            ? { tickerCandles: tickerEvents.flatMap(tickerCandleRecordsFromEvent) }
+            : {}),
+    };
+
+    return Object.keys(payload).length > 0 ? { payload } : null;
+}
+
+function isTickerTradeUpdate(event: MarketDataEvent): event is TickerUpdateEvent & { tradeId: string } {
+    return event.type === "ticker.update" && typeof event.tradeId === "string";
+}
+
+function tickerRecordFromEvent(event: TickerUpdateEvent & { tradeId: string }): DatabaseTickerRecord {
+    return {
+        marketId: event.marketId,
+        lastPrice: event.data.lastPrice,
+        priceChange24h: event.data.priceChange24h,
+        priceChangePercent24h: event.data.priceChangePercent24h,
+        high24h: event.data.high24h,
+        low24h: event.data.low24h,
+        volume24h: event.data.volume24h,
+        quoteVolume24h: event.data.quoteVolume24h,
+        engineTradeId: event.tradeId,
+        updatedAt: event.eventTs,
+    };
+}
+
+function tickerCandleRecordsFromEvent(event: TickerUpdateEvent & { tradeId: string }): DatabaseTickerCandleRecord[] {
+    const quantity = event.data.lastQuantity;
+    const quoteVolume = event.data.lastQuoteVolume;
+
+    if (!quantity || !quoteVolume) {
+        return [];
+    }
+
+    return TICKER_CANDLE_INTERVALS.map(({ interval, durationMs }) => ({
+        marketId: event.marketId,
+        interval,
+        bucketStart: bucketStartMs(event.eventTs, interval, durationMs),
+        open: event.data.lastPrice,
+        high: event.data.lastPrice,
+        low: event.data.lastPrice,
+        close: event.data.lastPrice,
+        volume: quantity,
+        quoteVolume,
+        tradeCount: 1,
+        engineTradeId: event.tradeId,
+        updatedAt: event.eventTs,
+    }));
+}
+
+function bucketStartMs(timestamp: number, interval: DatabaseTickerInterval, durationMs: number) {
+    if (interval !== "1w") {
+        return Math.floor(timestamp / durationMs) * durationMs;
+    }
+
+    const date = new Date(timestamp);
+    const day = date.getUTCDay();
+    const daysSinceMonday = (day + 6) % 7;
+
+    return Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate() - daysSinceMonday,
+        0,
+        0,
+        0,
+        0
+    );
 }
 
 async function start() {
@@ -358,7 +572,7 @@ async function start() {
     await initializeStreams();
 
     const blockingRedis = await RedisManager.createBlockingConnection(
-        `${REDIS_STREAMS.DATABASE_EVENT}:${CONSUMER_GROUPS.DATABASE_ENGINE}:${CONSUMERS.DATABASE_ENGINE}-${process.pid}`
+        `${REDIS_STREAMS.ENGINE_RESULT}:${CONSUMER_GROUPS.DATABASE_ENGINE}:${CONSUMERS.DATABASE_ENGINE}-${process.pid}`
     );
     const redis = await RedisManager.getInstance();
     const consumer = `${CONSUMERS.DATABASE_ENGINE}-${process.pid}`;
@@ -369,7 +583,7 @@ async function start() {
         const response = await blockingRedis.xReadGroup(
             CONSUMER_GROUPS.DATABASE_ENGINE,
             consumer,
-            [{ key: REDIS_STREAMS.DATABASE_EVENT, id: ">" }],
+            [{ key: REDIS_STREAMS.ENGINE_RESULT, id: ">" }],
             { BLOCK: BLOCK_TIME_MS, COUNT: BATCH_SIZE }
         );
 
@@ -379,12 +593,15 @@ async function start() {
 
         for (const streamData of response) {
             const messages = streamData.messages as RedisStreamMessage[];
-            const parsedEvents: DatabaseStreamEvent[] = [];
+            const parsedEvents: DatabasePersistenceEvent[] = [];
             const ackIds: string[] = [];
 
             for (const message of messages) {
                 try {
-                    parsedEvents.push(parseMessage(message));
+                    const parsed = parseMessage(message);
+                    if (parsed) {
+                        parsedEvents.push(parsed);
+                    }
                     ackIds.push(message.id);
                 } catch (error) {
                     console.error("Invalid database stream event", error);

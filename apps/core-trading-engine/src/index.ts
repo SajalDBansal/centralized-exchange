@@ -30,8 +30,10 @@ async function main() {
             const resultEvent = {
                 requestId: event.requestId,
                 backendId: event.backendId,
+                sourceEventType: event.type,
                 success: resultPayload.success,
                 payload: resultPayload,
+                updates: resultPayload.updates,
                 timestamp: Date.now(),
             };
 

@@ -15,8 +15,13 @@ export async function initializeStreams() {
     );
 
     await createGroup(
-        REDIS_STREAMS.DATABASE_EVENT,
+        REDIS_STREAMS.ENGINE_RESULT,
         CONSUMER_GROUPS.DATABASE_ENGINE
+    );
+
+    await createGroup(
+        REDIS_STREAMS.ENGINE_RESULT,
+        CONSUMER_GROUPS.WS_SERVER
     );
 }
 
