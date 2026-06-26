@@ -33,6 +33,7 @@ export class ValidationError extends ApiError {
         super(400, message);
 
         this.name = 'ValidationError';
+        this.type = 'VALIDATION_ERROR';
         this.errors = errors;
 
         Object.setPrototypeOf(this, new.target.prototype);

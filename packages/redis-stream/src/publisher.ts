@@ -28,4 +28,11 @@ export class RedisPublisher {
 
         return redis.xAdd(REDIS_STREAMS.DATABASE_EVENT, "*", { data: JSON.stringify(event) });
     }
+
+    static async publishPubSub(channel: string, message: string) {
+
+        const redis = await RedisManager.getInstance();
+
+        return redis.publish(channel, message);
+    }
 }

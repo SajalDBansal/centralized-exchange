@@ -11,6 +11,7 @@ import { SingleMarketPositions } from "./single-market-positions";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseManager } from "../utils/database-manager";
+import { buildIndexPriceMarketDataEvents, buildOrderMarketDataEvents, publishMarketDataEvents } from "../utils/market-data-publisher";
 
 // Data Store for the engine.
 export class EngineState {
@@ -168,6 +169,8 @@ export class Engine {
                 this.saveSnapshot();
                 await this.databaseManager.publish(subject, result.eventId, result.timestamp)
                     .catch((error) => console.error("Failed to publish database events", error));
+                await this.publishRealtimeMarketData(subject, result)
+                    .catch((error) => console.error("Failed to publish market data events", error));
             }
 
             return result;
@@ -509,6 +512,37 @@ export class Engine {
 
         return (++this.eventSequenceId);
     }
+
+    private publishRealtimeMarketData = async (
+        subject: IncomingEventTypes,
+        result: PayloadToBackendType
+    ) => {
+        if (!result.success) {
+            return;
+        }
+
+        if (
+            subject === EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE ||
+            subject === EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL
+        ) {
+            const order = (result as CreateOrderReturnPayload | CancelOrderReturnPayload).data?.order;
+
+            if (!order) {
+                return;
+            }
+
+            const { depths } = this.matchingEngine.getMarketDepth({ marketId: order.marketId });
+            await publishMarketDataEvents(buildOrderMarketDataEvents(
+                result as CreateOrderReturnPayload | CancelOrderReturnPayload,
+                depths
+            ));
+            return;
+        }
+
+        if (subject === EVENT_TO_ENGINE_SUBJECT.INDEX_PRICE_UPDATE) {
+            await publishMarketDataEvents(buildIndexPriceMarketDataEvents(result as IndexPriceUpdateReturnPayload));
+        }
+    };
 
     private getMarketById = (payload: GetMarketByIdPayload): GetMarketByIdReturnPayload => {
         try {
