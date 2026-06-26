@@ -52,6 +52,7 @@
         "jest": "^30.2.0",
         "nodemon": "^3.1.0",
         "supertest": "^6.3.3",
+        "ts-jest": "^29.4.6",
         "tsx": "^4.22.1",
         "typescript": "5.5.4",
       },
@@ -87,10 +88,12 @@
         "functional-red-black-tree": "^1.0.1",
       },
       "devDependencies": {
+        "@jest/globals": "^30.2.0",
         "@types/functional-red-black-tree": "^1.0.6",
         "@types/node": "^20.11.24",
         "@workspace/database": "workspace:*",
         "@workspace/eslint-config": "workspace:^",
+        "@workspace/jest-presets": "workspace:*",
         "@workspace/nats-streams": "workspace:*",
         "@workspace/redis-streams": "workspace:*",
         "@workspace/types": "workspace:*",
@@ -98,7 +101,9 @@
         "esbuild": "^0.20.1",
         "esbuild-register": "^3.5.0",
         "eslint": "^8.57.0",
+        "jest": "^30.2.0",
         "nodemon": "^3.1.0",
+        "ts-jest": "^29.4.6",
         "tsx": "^4.22.1",
         "typescript": "5.5.4",
       },
@@ -177,14 +182,18 @@
         "cors": "^2.8.5",
       },
       "devDependencies": {
+        "@jest/globals": "^30.2.0",
         "@types/node": "^20.11.24",
         "@workspace/database": "workspace:*",
         "@workspace/eslint-config": "workspace:^",
+        "@workspace/jest-presets": "workspace:*",
         "@workspace/typescript-config": "workspace:*",
         "esbuild": "^0.20.1",
         "esbuild-register": "^3.5.0",
         "eslint": "^8.57.0",
+        "jest": "^30.2.0",
         "nodemon": "^3.1.0",
+        "ts-jest": "^29.4.6",
         "typescript": "5.5.4",
       },
     },
@@ -192,17 +201,26 @@
       "name": "ws-server",
       "version": "0.0.0",
       "dependencies": {
+        "@workspace/redis-streams": "workspace:*",
+        "@workspace/types": "workspace:*",
         "cors": "^2.8.5",
+        "dotenv": "^17.4.2",
+        "ws": "^8.18.3",
       },
       "devDependencies": {
+        "@jest/globals": "^30.2.0",
         "@types/node": "^20.11.24",
+        "@types/ws": "^8.18.1",
         "@workspace/database": "workspace:*",
         "@workspace/eslint-config": "workspace:^",
+        "@workspace/jest-presets": "workspace:*",
         "@workspace/typescript-config": "workspace:*",
         "esbuild": "^0.20.1",
         "esbuild-register": "^3.5.0",
         "eslint": "^8.57.0",
+        "jest": "^30.2.0",
         "nodemon": "^3.1.0",
+        "ts-jest": "^29.4.6",
         "typescript": "5.5.4",
       },
     },
@@ -1086,6 +1104,8 @@
     "@types/supertest": ["@types/supertest@6.0.3", "", { "dependencies": { "@types/methods": "^1.1.4", "@types/superagent": "^8.1.0" } }, "sha512-8WzXq62EXFhJ7QsH3Ocb/iKQ/Ty9ZVWnVzoTKc9tyyFRRF3a74Tk2+TLFgaFFw364Ere+npzHKEJ6ga2LzIL7w=="],
 
     "@types/validate-npm-package-name": ["@types/validate-npm-package-name@4.0.2", "", {}, "sha512-lrpDziQipxCEeK5kWxvljWYhUvOiB2A9izZd9B2AFarYAkqZshb4lPbRs7zKEic6eGtH8V/2qJW+dPp9OtF6bw=="],
+
+    "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
     "@types/yargs": ["@types/yargs@17.0.35", "", { "dependencies": { "@types/yargs-parser": "*" } }, "sha512-qUHkeCyQFxMXg79wQfTtfndEC+N9ZZg76HJftDJp+qH2tV7Gj4OJi7l+PiWwJ+pWtW8GwSmqsDj/oymhrTWXjg=="],
 
@@ -2540,6 +2560,8 @@
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
 
     "write-file-atomic": ["write-file-atomic@5.0.1", "", { "dependencies": { "imurmurhash": "^0.1.4", "signal-exit": "^4.0.1" } }, "sha512-+QU2zd6OTD8XWIJCbffaiQeH9U73qIqafo1x6V1snCWYGJf6cVE0cDR4D8xRzcEnfI21IFrUPzPGtcPf8AC+Rw=="],
+
+    "ws": ["ws@8.21.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g=="],
 
     "ws-index-poller": ["ws-index-poller@workspace:apps/ws-index-poller"],
 
