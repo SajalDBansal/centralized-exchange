@@ -86,10 +86,18 @@ export default function HomePage() {
     return (
         <Shell title="home">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-border lg:grid-cols-[1fr_1fr]">
-                <div className="flex min-h-0 flex-col gap-px bg-border">
+                <div className="flex min-h-0 flex-col gap-px bg-border h-full">
                     <Panel title="system.overview">
                         <div className="grid grid-cols-[1fr_auto] gap-4 p-3 text-[12px]">
                             <div>
+                                <pre className="text-term-dim">{`
+ ████████╗██████╗ ██████╗
+ ╚══██╔══╝██╔══██╗██╔══██╗
+    ██║   ██████╔╝██║  ██║   trading-engine v0.1.0-dev
+    ██║   ██╔══██╗██║  ██║   simulated debug surface
+    ██║   ██║  ██║██████╔╝   build a3f1c · ${new Date().getFullYear()}
+    ╚═╝   ╚═╝  ╚═╝╚═════╝
+`}</pre>
                                 <pre className="text-term-dim">{` CEX DEBUG CONSOLE
  ├─ http  ${CORE_API_URL}
  └─ ws    ${MARKET_WS_URL}`}</pre>
