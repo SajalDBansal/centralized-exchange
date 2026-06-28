@@ -1,15 +1,24 @@
-import { Geist, Geist_Mono, Inter } from "next/font/google"
+import { Geist_Mono, Inter } from "next/font/google"
+import type { Metadata } from "next"
 
-import "@workspace/ui/globals.css"
+import "@workspace/ui/docs.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@workspace/ui/lib/utils";
 
-const inter = Inter({subsets:['latin'],variable:'--font-sans'})
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 const fontMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
+
+export const metadata: Metadata = {
+  title: {
+    default: "CEX Documentation",
+    template: "%s | CEX Docs",
+  },
+  description: "Architecture, APIs, trading workflows, data model, and operations for the CEX monorepo.",
+}
 
 export default function RootLayout({
   children,

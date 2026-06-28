@@ -1,0 +1,6 @@
+{
+  "name": "@workspace/docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repository-aligned Markdown documentation for the CEX platform"
+}
