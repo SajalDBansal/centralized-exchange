@@ -1,22 +1,9 @@
 import type { RequestHandler, Request, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { CancelOrderReturnPayload, CreateOrderReturnPayload, GetOrderByIdReturnPayload, GetUserOpenOrdersReturnPayload, EVENT_TO_ENGINE_SUBJECT, EventSource, PayloadToBackendType, PayloadToEngineType } from "@workspace/types";
+import { EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 import { CancelOrGetOrderClientSchema, CreateOrderClientSchema, GetOpenOrdersClientSchema } from "@workspace/validations";
 import { prisma } from "@workspace/database";
-import { backendRouter } from "../utils/backendResponseRouter";
-
-async function requestEngine<TResponse extends PayloadToBackendType>(
-    type: EVENT_TO_ENGINE_SUBJECT,
-    payload: PayloadToEngineType
-): Promise<TResponse> {
-    const result = await backendRouter.request({
-        source: EventSource.BACKEND,
-        type,
-        payload,
-    });
-
-    return result.payload as TResponse;
-}
+import { requestEngine } from "../utils/engine-request";
 
 export const createOrder: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
@@ -31,7 +18,7 @@ export const createOrder: RequestHandler = async (request: Request, response: Re
 
     const { marketId, entryPrice, quantity, side, position, leverage, type, postOnly, marketType, reduceOnly, stpMode, timeInForce } = validateData.data;
 
-    const res = await requestEngine<CreateOrderReturnPayload>(
+    const res = await requestEngine(
         EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE,
         {
             entryPrice, quantity, userId, marketId,
@@ -64,7 +51,7 @@ export const cancelOrder: RequestHandler = async (request: Request, response: Re
 
     const { orderId } = validateData.data;
 
-    const res = await requestEngine<CancelOrderReturnPayload>(
+    const res = await requestEngine(
         EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL,
         { userId, orderId }
     );
@@ -91,7 +78,7 @@ export const getAllOrderById: RequestHandler = async (request: Request, response
 
     const { orderId } = validateData.data;
 
-    const res = await requestEngine<GetOrderByIdReturnPayload>(
+    const res = await requestEngine(
         EVENT_TO_ENGINE_SUBJECT.ORDER_GET,
         { orderId, userId }
     );
@@ -118,7 +105,7 @@ export const getAllOpenOrderByMarket: RequestHandler = async (request: Request, 
 
     const { marketId } = validateData.data;
 
-    const res = await requestEngine<GetUserOpenOrdersReturnPayload>(
+    const res = await requestEngine(
         EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS,
         { userId, marketId }
     );

@@ -7,15 +7,17 @@ const healthRouter: Router = Router();
 // Engines
 healthRouter.get("/core-backend", asyncHandler(healthController.coreBackendHealth));
 healthRouter.get("/market-engine", asyncHandler(healthController.marketEngineHealth));
-healthRouter.get("/redis", asyncHandler(healthController.redisHealthCheck));
-healthRouter.get("/ws-engine", asyncHandler(healthController.wsServerHealth));
-healthRouter.get("/database-engine", asyncHandler(healthController.databaseEngineHealth));
-healthRouter.get("/snapshot-engine", asyncHandler(healthController.snapshotEngineHealth));
 
-// services
-healthRouter.get("/postgres", asyncHandler(healthController.postgreseHealth));
-healthRouter.get("/redis-pub-sub", asyncHandler(healthController.redisPubSubHealth));
+healthRouter.get("/redis-stream", asyncHandler(healthController.redisStreamHealth));
 healthRouter.get("/nats-stream", asyncHandler(healthController.natsStreamHealth));
-healthRouter.get("/s3-bucket", asyncHandler(healthController.s3BucketHealth));
+
+healthRouter.get("/ws-engine", asyncHandler(healthController.wsServerHealth));
+healthRouter.get("/ws-market-poller", asyncHandler(healthController.wsMarketPricePollerHealth));
+healthRouter.get("/database-engine", asyncHandler(healthController.databaseEngineHealth));
+healthRouter.get("/postgres", asyncHandler(healthController.postgreseHealth));
+
+healthRouter.get("/core-frontend", asyncHandler(healthController.coreFrontendCheck));
+healthRouter.get("/docs-frontend", asyncHandler(healthController.docsFrontendCheck));
+healthRouter.get("/debug-frontend", asyncHandler(healthController.debugFrontendCheck));
 
 export default healthRouter;

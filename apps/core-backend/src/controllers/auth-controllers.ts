@@ -7,10 +7,11 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cuid from "cuid";
 import { verifyJWTToken } from "../utils/verify-token";
-import { NatsManager } from "@workspace/nats-streams";
-import { AddUserPayload, BaseReturnPayload, EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
+// import { NatsManager } from "@workspace/nats-streams";
+import { EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
+import { requestEngine } from "../utils/engine-request";
 
-const natsPromise = NatsManager.getInstance();
+// const natsPromise = NatsManager.getInstance();
 
 export const signup: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
@@ -28,11 +29,12 @@ export const signup: RequestHandler = async (request: Request, response: Respons
     // TODO: Add verfication constraints here
     const user = await prisma.user.create({ data: { username, passwordHash, email, isVerified: true } });
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<BaseReturnPayload, AddUserPayload>(
-        EVENT_TO_ENGINE_SUBJECT.USER_ADD, { userId: user.id }
-    );
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const res = await nats.request<BaseReturnPayload, AddUserPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.USER_ADD, { userId: user.id }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.USER_ADD, { userId: user.id });
 
     console.log(res);
     if (!res.success) throw new ApiError(400, res.message);

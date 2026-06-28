@@ -17,6 +17,8 @@ import {
     Market,
     MarketType,
     NormalizeOrderReturnType,
+    OffRampPayload,
+    OffRampReturnPayload,
     OnRampPayload,
     OnRampReturnPayload,
     OrderPosition,
@@ -73,6 +75,23 @@ export class DatabaseManager {
             userId: payload.userId,
             assetId: payload.assetId,
             type: "ON_RAMP",
+            status: "APPLIED",
+            amount: payload.amount,
+            createdAt: result.timestamp,
+            appliedAt: result.timestamp,
+        });
+    }
+
+    captureOffRamp(payload: OffRampPayload, result: OffRampReturnPayload) {
+        if (!result.success || !result.data) {
+            return;
+        }
+
+        this.pending.assetTransactions.push({
+            id: `asset-tx:${result.eventId}`,
+            userId: payload.userId,
+            assetId: payload.assetId,
+            type: "WITHDRAWAL",
             status: "APPLIED",
             amount: payload.amount,
             createdAt: result.timestamp,

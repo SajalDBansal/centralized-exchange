@@ -1,38 +1,50 @@
 import supertest from "supertest";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
+import { EVENT_TO_ENGINE_SUBJECT, EventSource } from "@workspace/types";
 import { createServer } from "../server";
 import { errorMiddleware } from "../middleware/error-handler";
 
-const mockRequest = jest.fn<(subject: unknown, payload?: unknown) => Promise<unknown>>();
+const mockBackendRequest = jest.fn<(event: unknown) => Promise<unknown>>();
+const mockTickerCandleFindMany = jest.fn<(...args: unknown[]) => Promise<unknown[]>>();
 
-jest.mock("@workspace/nats-streams", () => ({
-    NatsManager: {
-        getInstance: jest.fn(() => Promise.resolve({ request: mockRequest })),
+jest.mock("../utils/backendResponseRouter", () => ({
+    backendRouter: {
+        backendId: "backend-test",
+        request: mockBackendRequest,
+        startListener: jest.fn(),
+        stop: jest.fn(),
+    },
+}));
+
+jest.mock("@workspace/database", () => ({
+    prisma: {
+        marketTickerCandle: { findMany: mockTickerCandleFindMany },
     },
 }));
 
 describe("market data routes", () => {
     beforeEach(() => {
-        mockRequest.mockReset();
+        mockBackendRequest.mockReset();
+        mockTickerCandleFindMany.mockReset();
     });
 
     it("returns a market snapshot with timestamp and depth sequence", async () => {
         const market = createMarket("BTC_INR");
 
-        mockRequest.mockImplementation(async (subject) => {
+        mockBackendRequest.mockImplementation(async (value) => {
+            const { type: subject } = value as { type: EVENT_TO_ENGINE_SUBJECT };
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_GET) {
-                return {
+                return engineResult({
                     success: true,
                     eventId: 10,
                     timestamp: 1000,
                     message: "Market fetched",
                     data: { market },
-                };
+                });
             }
 
             if (subject === EVENT_TO_ENGINE_SUBJECT.DEPTH_GET) {
-                return {
+                return engineResult({
                     success: true,
                     eventId: 11,
                     timestamp: 1001,
@@ -43,7 +55,7 @@ describe("market data routes", () => {
                             asks: [{ price: "101", quantity: "2" }],
                         },
                     },
-                };
+                });
             }
 
             throw new Error(`Unexpected subject: ${subject}`);
@@ -65,14 +77,16 @@ describe("market data routes", () => {
             },
         });
         expect(typeof response.body.data.snapshot.snapshotAt).toBe("number");
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
-            { marketId: "BTC_INR" }
-        );
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
-            { marketId: "BTC_INR" }
-        );
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
+            payload: { marketId: "BTC_INR" },
+        }));
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
+            payload: { marketId: "BTC_INR" },
+        }));
     });
 
     it("returns ticker placeholders for all markets", async () => {
@@ -81,13 +95,13 @@ describe("market data routes", () => {
             ETH_USD: createMarket("ETH_USD"),
         };
 
-        mockRequest.mockResolvedValue({
+        mockBackendRequest.mockResolvedValue(engineResult({
             success: true,
             eventId: 20,
             timestamp: 2000,
             message: "Markets fetched",
             data: { markets },
-        });
+        }));
 
         const response = await supertest(buildApp())
             .get("/api/v1/market/tickers")
@@ -99,7 +113,35 @@ describe("market data routes", () => {
             expect.objectContaining({ type: "ticker.update", marketId: "ETH_USD" }),
         ]));
         expect(typeof response.body.data.snapshotAt).toBe("number");
-        expect(mockRequest).toHaveBeenCalledWith(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL,
+        }));
+    });
+
+    it("returns ascending ticker candles from the database", async () => {
+        mockTickerCandleFindMany.mockResolvedValue([
+            tickerCandle(new Date("2026-06-28T10:01:00.000Z"), "101", 2n),
+            tickerCandle(new Date("2026-06-28T10:00:00.000Z"), "100", 1n),
+        ]);
+
+        const response = await supertest(buildApp())
+            .get("/api/v1/market/btc_inr/candles?interval=1m&limit=60")
+            .expect(200);
+
+        expect(response.body.data).toMatchObject({
+            marketId: "BTC_INR",
+            interval: "1m",
+            candles: [
+                expect.objectContaining({ close: "100", lastTradeId: "1" }),
+                expect.objectContaining({ close: "101", lastTradeId: "2" }),
+            ],
+        });
+        expect(mockTickerCandleFindMany).toHaveBeenCalledWith({
+            where: { marketId: "BTC_INR", interval: "1m" },
+            orderBy: { bucketStart: "desc" },
+            take: 60,
+        });
     });
 });
 
@@ -109,6 +151,17 @@ function buildApp() {
     app.use("/api/v1/market", marketRouter);
     app.use(errorMiddleware);
     return app;
+}
+
+function engineResult(payload: unknown) {
+    return {
+        requestId: "request-1",
+        backendId: "backend-test",
+        sourceEventType: EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
+        success: true,
+        payload,
+        timestamp: Date.now(),
+    };
 }
 
 function createMarket(id: string) {
@@ -124,5 +177,23 @@ function createMarket(id: string) {
         tickSize: 1,
         lotSize: 1,
         minNotional: 1,
+    };
+}
+
+function tickerCandle(bucketStart: Date, close: string, lastTradeId: bigint) {
+    return {
+        marketId: "BTC_INR",
+        interval: "1m",
+        bucketStart,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: "1",
+        quoteVolume: close,
+        tradeCount: 1,
+        lastTradeId,
+        createdAt: bucketStart,
+        updatedAt: bucketStart,
     };
 }

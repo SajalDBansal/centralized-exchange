@@ -35,7 +35,7 @@ The stream names are defined in `packages/types/src/types/redis-types.ts`.
 | Constant | Redis key | Purpose |
 | --- | --- | --- |
 | `REDIS_STREAMS.MARKET_EVENT` | `market:event` | Shared input stream for engine-facing market requests. |
-| `REDIS_STREAMS.backendResponse(backendId)` | `backend:response:<backendId>` | Dedicated response stream for one backend process. |
+| `REDIS_STREAMS.ENGINE_RESULT` | `engine:result` | Shared engine results; consumers filter or group-process the envelope. |
 
 The consumer groups are:
 
@@ -43,6 +43,8 @@ The consumer groups are:
 | --- | --- | --- | --- |
 | `CONSUMER_GROUPS.TRADE_ENGINE` | `trade-engine-group` | `market:event` | Trading engine workers process backend market events. |
 | `CONSUMER_GROUPS.SNAPSHOT_ENGINE` | `snapshot-engine-group` | `market:event` | Snapshot workers can independently observe the same events. |
+| `CONSUMER_GROUPS.DATABASE_ENGINE` | `database-engine-group` | `engine:result` | Persists engine database updates. |
+| `CONSUMER_GROUPS.WS_SERVER` | `ws-server-group` | `engine:result` | Broadcasts engine market-data updates. |
 
 Consumer names are process-specific:
 
@@ -62,7 +64,7 @@ flowchart LR
     MarketStream[(market:event stream)]
     TradeGroup{{trade-engine-group}}
     Engine[Core Trading Engine]
-    ResponseStream[(backend response stream)]
+    ResponseStream[(engine:result stream)]
     Client[HTTP / WS Caller]
 
     Client --> Controller
@@ -86,8 +88,8 @@ Step by step:
 4. A trading engine consumer reads the event from `market:event` using `XREADGROUP`.
 5. The engine calls the normal `engine.process(event.type, event.payload)` method.
 6. If the handler succeeds, the consumer acknowledges the message with `XACK`.
-7. The engine publishes a `TradeResultEvent` to `backend:response:<backendId>`.
-8. The backend response router reads its own response stream with `XREAD`.
+7. The engine publishes a `TradeResultEvent` to `engine:result`.
+8. Each backend response router reads `engine:result` with `XREAD` and ignores envelopes for other `backendId` values.
 9. The router matches the returned `requestId` to the pending promise and resolves the controller response.
 
 ## Package Files
@@ -187,9 +189,8 @@ sequenceDiagram
     end
 ```
 
-The Redis path in `apps/core-trading-engine/src/index.ts` is currently present
-but commented out. When Redis Streams are used for the engine, startup should
-initialize the groups before starting consumers:
+Redis Streams are the active engine transport. Startup initializes every group
+before the trading-engine consumer begins reading commands:
 
 ```ts
 await initializeStreams();
@@ -214,12 +215,12 @@ The `*` tells Redis to generate the stream entry id.
 The event shape is:
 
 ```ts
-interface MarketEvent {
+type MarketEvent<TSubject extends IncomingEventTypes> = {
   requestId: string;
   backendId: string;
   source: EventSource;
-  type: IncomingEventTypes;
-  payload: PayloadToEngineType;
+  type: TSubject;
+  payload: EngineRequestPayloadBySubject[TSubject];
   timestamp: number;
 }
 ```
@@ -230,7 +231,7 @@ Used by the trading engine to send the result back to the backend instance that
 created the request.
 
 ```ts
-redis.xAdd(REDIS_STREAMS.backendResponse(event.backendId), "*", {
+redis.xAdd(REDIS_STREAMS.ENGINE_RESULT, "*", {
   data: JSON.stringify(event),
 });
 ```
@@ -238,11 +239,13 @@ redis.xAdd(REDIS_STREAMS.backendResponse(event.backendId), "*", {
 The event shape is:
 
 ```ts
-interface TradeResultEvent {
+interface TradeResultEvent<TSubject extends IncomingEventTypes> {
   requestId: string;
   backendId: string;
+  sourceEventType: TSubject;
   success: boolean;
-  payload: Record<string, any>;
+  payload: EngineResponsePayloadBySubject[TSubject];
+  updates?: EngineReturnUpdates;
   timestamp: number;
 }
 ```

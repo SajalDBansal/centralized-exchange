@@ -13,6 +13,7 @@ export enum EVENT_TO_ENGINE_SUBJECT {
     ORDER_OPEN_ORDERS = "engine.order.openOrders",
     ORDER_GET = "engine.order.get",
     ON_RAMP = "engine.ramp.on",
+    OFF_RAMP = "engine.ramp.off",
     BALANCE_GET = "engine.balance.get",
     DEPTH_GET = "engine.depth.get",
     HEALTH_CHECK = "engine.health.check",
@@ -56,6 +57,8 @@ export type OnRampPayload = {
     assetId: string;
     amount: string;
 }
+
+export type OffRampPayload = OnRampPayload;
 
 export type GetUserBalancesPayload = {
     userId: UserId
@@ -130,6 +133,7 @@ export type PayloadToEngineType =
     | GetUserOpenOrdersPayload
     | GetOrderByIdPayload
     | OnRampPayload
+    | OffRampPayload
     | GetUserBalancesPayload
     | GetDepthPayload
     | HealthCheckPayload
@@ -153,9 +157,11 @@ export type PayloadToBackendType =
     | GetUserOpenOrdersReturnPayload
     | GetOrderByIdReturnPayload
     | OnRampReturnPayload
+    | OffRampReturnPayload
     | GetUserBalancesReturnPayload
     | GetDepthReturnPayload
     | GetMarketsReturnPayload
+    | GetAssetsReturnPayload
     | GetMarketByIdReturnPayload
     | AddMarketReturnPayload
     | UpdateMarketReturnPayload
@@ -262,6 +268,8 @@ export interface DeleteMarketReturnPayload extends BaseReturnPayloadWithUser {
     }
 }
 
+export interface OffRampReturnPayload extends OnRampReturnPayload { }
+
 export interface IndexPriceUpdateReturnPayload extends BaseReturnPayload {
     data?: {
         marketId: MarketId;
@@ -281,3 +289,52 @@ export interface FundingSettleReturnPayload extends BaseReturnPayload {
         liquidatablePositionIds: string[];
     }
 }
+
+/**
+ * Transport-independent engine request contract. Redis streams use this map
+ * to keep each subject correlated with its exact request payload.
+ */
+export type EngineRequestPayloadBySubject = {
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE]: CreateOrderPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL]: CancelOrderPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS]: GetUserOpenOrdersPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_GET]: GetOrderByIdPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ON_RAMP]: OnRampPayload;
+    [EVENT_TO_ENGINE_SUBJECT.OFF_RAMP]: OffRampPayload;
+    [EVENT_TO_ENGINE_SUBJECT.BALANCE_GET]: GetUserBalancesPayload;
+    [EVENT_TO_ENGINE_SUBJECT.DEPTH_GET]: GetDepthPayload;
+    [EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK]: HealthCheckPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL]: undefined;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET]: undefined;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET]: GetMarketByIdPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_ADD]: AddMarketPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE]: UpdateMarketPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE]: DeleteMarketPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET]: AddMarketAssetPayload;
+    [EVENT_TO_ENGINE_SUBJECT.INDEX_PRICE_UPDATE]: IndexPriceUpdatePayload;
+    [EVENT_TO_ENGINE_SUBJECT.FUNDING_SETTLE]: FundingSettlePayload;
+    [EVENT_TO_ENGINE_SUBJECT.USER_ADD]: AddUserPayload;
+};
+
+/** Correlates an engine subject with the response carried on engine:result. */
+export type EngineResponsePayloadBySubject = {
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE]: CreateOrderReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_CANCEL]: CancelOrderReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_OPEN_ORDERS]: GetUserOpenOrdersReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ORDER_GET]: GetOrderByIdReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.ON_RAMP]: OnRampReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.OFF_RAMP]: OffRampReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.BALANCE_GET]: GetUserBalancesReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.DEPTH_GET]: GetDepthReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK]: BaseReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL]: GetMarketsReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET]: GetAssetsReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_GET]: GetMarketByIdReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_ADD]: AddMarketReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE]: UpdateMarketReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE]: DeleteMarketReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET]: BaseReturnPayloadWithUser;
+    [EVENT_TO_ENGINE_SUBJECT.INDEX_PRICE_UPDATE]: IndexPriceUpdateReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.FUNDING_SETTLE]: FundingSettleReturnPayload;
+    [EVENT_TO_ENGINE_SUBJECT.USER_ADD]: BaseReturnPayload;
+};

@@ -87,9 +87,41 @@ export class BalanceEngine {
             this.reject(EVENT_REJECT_CODES.USER_NOT_FOUND, "User not found");
         }
 
+        if (amount <= 0n) {
+            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Amount must be greater than zero");
+        }
+
         const existing = this.getOrCreateBalance(balances, assetId);
         existing.total += amount;
 
+        const precision = this.getAsset(assetId).precision;
+
+        return {
+            assetId,
+            total: formatBigInt(existing.total, precision),
+            locked: formatBigInt(existing.locked, precision),
+        };
+    }
+
+    removeBalance(payload: NormalizeOnRampType) {
+        const { userId, assetId, amount } = payload;
+        const balances = this.state.balances.get(userId);
+
+        if (!balances) {
+            this.reject(EVENT_REJECT_CODES.USER_NOT_FOUND, "User not found");
+        }
+
+        if (amount <= 0n) {
+            this.reject(EVENT_REJECT_CODES.INVALID_AMOUNT, "Amount must be greater than zero");
+        }
+
+        const existing = this.getOrCreateBalance(balances, assetId);
+
+        if (existing.total - existing.locked < amount) {
+            this.reject(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE, "Insufficient available balance");
+        }
+
+        existing.total -= amount;
         const precision = this.getAsset(assetId).precision;
 
         return {

@@ -9,6 +9,7 @@ userRouter.post("/", asyncHandler(userController.updateProfile));
 
 userRouter.get("/get-balance", asyncHandler(userController.getBalance));
 userRouter.post("/add-balance", asyncHandler(userController.addBalance));
+userRouter.post("/withdraw-balance", asyncHandler(userController.withdrawBalance));
 userRouter.post("/withdraw-balnce", asyncHandler(userController.withdrawBalance));
 
 export default userRouter;

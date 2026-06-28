@@ -1,5 +1,11 @@
 import cuid from "cuid";
-import { REDIS_STREAMS, TradeResultEvent } from "@workspace/types";
+import {
+    EngineStreamRequest,
+    IncomingEventTypes,
+    MarketEvent,
+    REDIS_STREAMS,
+    TradeResultEvent,
+} from "@workspace/types";
 import { RedisManager, RedisPublisher } from "@workspace/redis-streams";
 
 export class BackendResponseRouter {
@@ -82,16 +88,19 @@ export class BackendResponseRouter {
      * Publishes a request event and returns a promise that resolves
      * when the matching trade result event returns on our stream.
      */
-    async request(marketEvent: any, timeoutMs = 5000): Promise<TradeResultEvent> {
+    async request<TSubject extends IncomingEventTypes>(
+        marketEvent: EngineStreamRequest<TSubject>,
+        timeoutMs = 5000
+    ): Promise<TradeResultEvent<TSubject>> {
         const requestId = cuid();
         const enrichedEvent = {
             ...marketEvent,
             requestId,
             backendId: this.backendId,
             timestamp: Date.now()
-        };
+        } as MarketEvent<TSubject>;
 
-        return new Promise<TradeResultEvent>(async (resolve, reject) => {
+        return new Promise<TradeResultEvent<TSubject>>((resolve, reject) => {
             // Set up timeout to prevent memory leak / hanging connections
             const timeoutId = setTimeout(() => {
                 this.responseMap.delete(requestId);
@@ -99,16 +108,18 @@ export class BackendResponseRouter {
             }, timeoutMs);
 
             // Register promise callbacks
-            this.responseMap.set(requestId, { resolve, reject, timeoutId });
+            this.responseMap.set(requestId, {
+                resolve: (value) => resolve(value as TradeResultEvent<TSubject>),
+                reject,
+                timeoutId,
+            });
 
-            try {
-                // Publish to engine stream
-                await RedisPublisher.publishMarketEvent(enrichedEvent);
-            } catch (err) {
+            // Publish to engine stream after the response callback is registered.
+            void RedisPublisher.publishMarketEvent(enrichedEvent).catch((error) => {
                 clearTimeout(timeoutId);
                 this.responseMap.delete(requestId);
-                reject(err);
-            }
+                reject(error);
+            });
         });
     }
 

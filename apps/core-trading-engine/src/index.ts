@@ -1,45 +1,25 @@
 import { Engine } from "./engines/core-engine";
-import { NatsManager } from "@workspace/nats-streams";
-import { RedisConsumer, RedisPublisher, initializeStreams } from "@workspace/redis-streams";
-import { CONSUMER_GROUPS, CONSUMERS, EventSource, MarketEvent, EVENT_TO_ENGINE_SUBJECT, REDIS_STREAMS } from "@workspace/types";
+// import { NatsManager } from "@workspace/nats-streams";
+import { RedisConsumer, initializeStreams } from "@workspace/redis-streams";
+import { AnyMarketEvent, CONSUMER_GROUPS, CONSUMERS, REDIS_STREAMS } from "@workspace/types";
+import { createEngineStreamHandler } from "./stream-handler";
 
 async function main() {
     const engine = new Engine();
-    const nats = (await NatsManager.getInstance());
     console.log("Engine Started");
 
-    await nats.subscribe("engine.>", engine.process);
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = (await NatsManager.getInstance());
+    // await nats.subscribe("engine.>", engine.process);
 
-    // Initialize the streams and consumer groups
+    // Redis streams are now the only active engine command transport.
     await initializeStreams();
 
-    const consumer = new RedisConsumer<MarketEvent>({
+    const consumer = new RedisConsumer<AnyMarketEvent>({
         stream: REDIS_STREAMS.MARKET_EVENT,
         group: CONSUMER_GROUPS.TRADE_ENGINE,
         consumer: `${CONSUMERS.TRADE_ENGINE}-${process.pid}`,
-        handler: async (event: MarketEvent) => {
-            // 1. Process via existing core trading logic
-            // Adapt the event type to fit the previous Nats incoming subject format if needed
-            const resultPayload = await engine.process(event.type, event.payload);
-
-            if (event.source !== EventSource.BACKEND) {
-                return;
-            }
-
-            // 2. Format result
-            const resultEvent = {
-                requestId: event.requestId,
-                backendId: event.backendId,
-                sourceEventType: event.type,
-                success: resultPayload.success,
-                payload: resultPayload,
-                updates: resultPayload.updates,
-                timestamp: Date.now(),
-            };
-
-            // 3. Publish back to backend specific stream
-            await RedisPublisher.publishTradeResult(resultEvent);
-        }
+        handler: createEngineStreamHandler(engine),
     })
 
     await consumer.start();

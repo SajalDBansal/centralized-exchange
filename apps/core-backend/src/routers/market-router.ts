@@ -9,6 +9,7 @@ const marketRouter: Router = Router();
 marketRouter.get("/", asyncHandler(marketController.getMarkets));
 marketRouter.get("/assets", asyncHandler(marketController.getAssets));
 marketRouter.get("/tickers", asyncHandler(marketDataController.getMarketTickers));
+marketRouter.get("/:marketId/candles", asyncHandler(marketDataController.getMarketTickerCandles));
 marketRouter.get("/:marketId/snapshot", asyncHandler(marketDataController.getMarketSnapshot));
 marketRouter.get("/:marketId", asyncHandler(marketController.getMarketById));
 marketRouter.post("/", requireAdminAuth, asyncHandler(marketController.addMarket));

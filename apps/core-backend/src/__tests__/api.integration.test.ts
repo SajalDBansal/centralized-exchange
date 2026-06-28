@@ -4,6 +4,8 @@ process.env.JWT_REFRESH_TOKEN = "test-refresh-secret";
 import supertest from "supertest";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import {
     EVENT_TO_ENGINE_SUBJECT,
@@ -16,7 +18,6 @@ import {
     TimeInForce,
 } from "@workspace/types";
 
-const mockRequest = jest.fn<(subject: unknown, payload?: unknown) => Promise<unknown>>();
 const mockBackendRequest = jest.fn<(event: unknown) => Promise<unknown>>();
 
 const mockPrisma = {
@@ -35,12 +36,6 @@ const mockPrisma = {
     },
 };
 
-jest.mock("@workspace/nats-streams", () => ({
-    NatsManager: {
-        getInstance: jest.fn(() => Promise.resolve({ request: mockRequest })),
-    },
-}));
-
 jest.mock("../utils/backendResponseRouter", () => ({
     backendRouter: {
         backendId: "backend-test",
@@ -56,7 +51,6 @@ jest.mock("@workspace/database", () => ({
 
 describe("core backend API integration", () => {
     beforeEach(() => {
-        mockRequest.mockReset();
         mockBackendRequest.mockReset();
         Object.values(mockPrisma.user).forEach((mock) => mock.mockReset());
         Object.values(mockPrisma.session).forEach((mock) => mock.mockReset());
@@ -70,7 +64,7 @@ describe("core backend API integration", () => {
             username: "alice",
             email: "alice@example.com",
         });
-        mockRequest.mockResolvedValue(success("User added"));
+        mockBackendRequest.mockResolvedValue(engineResult(success("User added")));
 
         const response = await supertest(buildApp())
             .post("/api/v1/auth/signup")
@@ -93,10 +87,11 @@ describe("core backend API integration", () => {
                 isVerified: true,
             }),
         });
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.USER_ADD,
-            { userId: "user-1" }
-        );
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.USER_ADD,
+            payload: { userId: "user-1" },
+        }));
     });
 
     it("rejects invalid signup payloads before hitting the database or engine", async () => {
@@ -115,7 +110,7 @@ describe("core backend API integration", () => {
             type: "VALIDATION_ERROR",
         });
         expect(mockPrisma.user.create).not.toHaveBeenCalled();
-        expect(mockRequest).not.toHaveBeenCalled();
+        expect(mockBackendRequest).not.toHaveBeenCalled();
     });
 
     it("signs in with a valid password and stores a refresh session", async () => {
@@ -168,9 +163,9 @@ describe("core backend API integration", () => {
         });
     });
 
-    it("proxies user balance reads and on-ramp writes to the engine", async () => {
-        mockRequest
-            .mockResolvedValueOnce({
+    it("proxies user balance reads, on-ramp writes, and withdrawals to the engine", async () => {
+        mockBackendRequest
+            .mockResolvedValueOnce(engineResult({
                 ...success("Balances fetched"),
                 userId: "user-1",
                 data: {
@@ -178,12 +173,17 @@ describe("core backend API integration", () => {
                         INR: { total: "1000", locked: "0" },
                     },
                 },
-            })
-            .mockResolvedValueOnce({
+            }))
+            .mockResolvedValueOnce(engineResult({
                 ...success("Balance added"),
                 userId: "user-1",
                 data: { assetId: "INR", total: "1100", locked: "0" },
-            });
+            }))
+            .mockResolvedValueOnce(engineResult({
+                ...success("Balance withdrawn"),
+                userId: "user-1",
+                data: { assetId: "INR", total: "1000", locked: "0" },
+            }));
 
         await supertest(buildApp())
             .get("/api/v1/user/get-balance")
@@ -196,16 +196,172 @@ describe("core backend API integration", () => {
             .send({ assetId: "INR", amount: "100" })
             .expect(200);
 
-        expect(mockRequest).toHaveBeenNthCalledWith(
+        const withdrawal = await supertest(buildApp())
+            .post("/api/v1/user/withdraw-balance")
+            .set("authorization", accessToken())
+            .send({ assetId: "INR", amount: "100" })
+            .expect(200);
+
+        expect(withdrawal.body.data).toEqual({ assetId: "INR", total: "1000", locked: "0" });
+
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
             1,
-            EVENT_TO_ENGINE_SUBJECT.BALANCE_GET,
-            { userId: "user-1" }
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.BALANCE_GET,
+                payload: { userId: "user-1" },
+            })
         );
-        expect(mockRequest).toHaveBeenNthCalledWith(
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
             2,
-            EVENT_TO_ENGINE_SUBJECT.ON_RAMP,
-            { userId: "user-1", assetId: "INR", amount: "100" }
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.ON_RAMP,
+                payload: { userId: "user-1", assetId: "INR", amount: "100" },
+            })
         );
+        expect(mockBackendRequest).toHaveBeenNthCalledWith(
+            3,
+            expect.objectContaining({
+                source: EventSource.BACKEND,
+                type: EVENT_TO_ENGINE_SUBJECT.OFF_RAMP,
+                payload: { userId: "user-1", assetId: "INR", amount: "100" },
+            })
+        );
+    });
+
+    it("runs signup, signin, funding, spot fill, cancel, perp open/close, balance verification, and withdrawal", async () => {
+        const engine = createFlowEngine();
+        const passwordHash = await bcrypt.hash("Password1", 10);
+        const flowUser = {
+            id: "flow-user",
+            username: "flowtrader",
+            email: "flow@example.com",
+            passwordHash,
+            isVerified: true,
+            isArchived: false,
+        };
+
+        mockPrisma.user.findFirst
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(flowUser);
+        mockPrisma.user.create.mockResolvedValue(flowUser);
+        mockPrisma.session.create.mockResolvedValue({ id: "flow-session" });
+        mockBackendRequest.mockImplementation(async (value) => {
+            const event = value as { type: never; payload: never };
+            return engineResult(await engine.process(event.type, event.payload));
+        });
+
+        await addEngineUser(engine, "spot-maker", { BTC: "2" });
+        await addEngineUser(engine, "perp-short", { USD: "1000" });
+        await addEngineUser(engine, "perp-long", { USD: "1000" });
+
+        const app = buildApp();
+
+        await supertest(app).post("/api/v1/auth/signup").send({
+            username: flowUser.username,
+            email: flowUser.email,
+            password: "Password1",
+            confirmPassword: "Password1",
+        }).expect(200);
+
+        const signin = await supertest(app).post("/api/v1/auth/signin").send({
+            username: flowUser.username,
+            password: "Password1",
+        }).expect(200);
+        const authorization = signin.body.token as string;
+
+        for (const [assetId, amount] of [["INR", "1000"], ["USD", "1000"]] as const) {
+            await supertest(app).post("/api/v1/user/add-balance")
+                .set("authorization", authorization)
+                .send({ assetId, amount })
+                .expect(200);
+        }
+
+        await engine.process(EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE, directOrder("spot-maker", {
+            side: OrderSide.SELL,
+            marketId: "BTC_INR",
+            marketType: MarketType.SPOT,
+        }));
+
+        const spotTrade = await supertest(app).post("/api/v1/order")
+            .set("authorization", authorization)
+            .send(orderBody({ type: OrderType.MARKET, timeInForce: TimeInForce.IOC }))
+            .expect(200);
+        expect(spotTrade.body.order.data.order).toMatchObject({ status: "FILLED", filled: "1" });
+
+        const afterSpot = await getApiBalances(app, authorization);
+        expect(afterSpot.BTC).toEqual({ total: "1", locked: "0" });
+        expect(afterSpot.INR).toEqual({ total: "899.98", locked: "0" });
+
+        const resting = await supertest(app).post("/api/v1/order")
+            .set("authorization", authorization)
+            .send(orderBody({ entryPrice: "90" }))
+            .expect(200);
+        const restingOrderId = resting.body.order.data.order.orderId as string;
+
+        const whileResting = await getApiBalances(app, authorization);
+        expect(whileResting.INR?.locked).toBe("90.01");
+        await supertest(app).delete(`/api/v1/order/${restingOrderId}`)
+            .set("authorization", authorization)
+            .expect(200);
+        const afterCancel = await getApiBalances(app, authorization);
+        expect(afterCancel.INR).toEqual({ total: "899.98", locked: "0" });
+
+        await engine.process(EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE, directOrder("perp-short", {
+            marketId: "BTC_PERP",
+            marketType: MarketType.PERP,
+            side: OrderSide.SELL,
+            position: OrderPosition.SHORT,
+            leverage: 10,
+        }));
+        const perpOpen = await supertest(app).post("/api/v1/order")
+            .set("authorization", authorization)
+            .send(orderBody({
+                marketId: "BTC_PERP",
+                marketType: MarketType.PERP,
+                side: OrderSide.BUY,
+                position: OrderPosition.LONG,
+                leverage: 10,
+                type: OrderType.MARKET,
+                timeInForce: TimeInForce.IOC,
+            }))
+            .expect(200);
+        expect(perpOpen.body.order.data.order).toMatchObject({ status: "FILLED", marketType: "PERP" });
+
+        await engine.process(EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE, directOrder("perp-long", {
+            marketId: "BTC_PERP",
+            marketType: MarketType.PERP,
+            side: OrderSide.BUY,
+            position: OrderPosition.LONG,
+            leverage: 10,
+        }));
+        const perpClose = await supertest(app).post("/api/v1/order")
+            .set("authorization", authorization)
+            .send(orderBody({
+                marketId: "BTC_PERP",
+                marketType: MarketType.PERP,
+                side: OrderSide.SELL,
+                position: OrderPosition.SHORT,
+                leverage: 10,
+                reduceOnly: true,
+                type: OrderType.MARKET,
+                timeInForce: TimeInForce.IOC,
+            }))
+            .expect(200);
+        expect(perpClose.body.order.data.order).toMatchObject({ status: "FILLED", reduceOnly: true });
+
+        const afterPerpClose = await getApiBalances(app, authorization);
+        expect(afterPerpClose.USD).toEqual({ total: "999.96", locked: "0" });
+
+        await supertest(app).post("/api/v1/user/withdraw-balance")
+            .set("authorization", authorization)
+            .send({ assetId: "USD", amount: "100" })
+            .expect(200);
+        const finalBalances = await getApiBalances(app, authorization);
+        expect(finalBalances.USD).toEqual({ total: "899.96", locked: "0" });
+        expect(finalBalances.INR).toEqual({ total: "899.98", locked: "0" });
+        expect(finalBalances.BTC).toEqual({ total: "1", locked: "0" });
     });
 
     it.each([
@@ -405,18 +561,19 @@ describe("core backend API integration", () => {
 
     it("covers market, depth, and engine health routes", async () => {
         const market = createMarket("BTC_INR");
-        mockRequest.mockImplementation(async (subject, payload) => {
+        mockBackendRequest.mockImplementation(async (value) => {
+            const { type: subject, payload } = value as { type: EVENT_TO_ENGINE_SUBJECT; payload?: unknown };
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL) {
-                return { ...success("Markets fetched"), data: { markets: { BTC_INR: market } } };
+                return engineResult({ ...success("Markets fetched"), data: { markets: { BTC_INR: market } } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET) {
-                return { ...success("Assets fetched"), data: { assets: { BTC: market.baseAsset } } };
+                return engineResult({ ...success("Assets fetched"), data: { assets: { BTC: market.baseAsset } } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_GET) {
-                return { ...success("Market fetched"), data: { market } };
+                return engineResult({ ...success("Market fetched"), data: { market } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.DEPTH_GET) {
-                return {
+                return engineResult({
                     ...success("Depth fetched"),
                     data: {
                         depths: {
@@ -424,22 +581,22 @@ describe("core backend API integration", () => {
                             asks: [{ price: "101", quantity: "1" }],
                         },
                     },
-                };
+                });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_ADD) {
-                return { ...success("Market added"), userId: "1243", data: { market } };
+                return engineResult({ ...success("Market added"), userId: "1243", data: { market } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET) {
-                return { ...success("Asset added"), userId: "1243" };
+                return engineResult({ ...success("Asset added"), userId: "1243" });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE) {
-                return { ...success("Market updated"), userId: "1243", data: { market } };
+                return engineResult({ ...success("Market updated"), userId: "1243", data: { market } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE) {
-                return { ...success("Market deleted"), userId: "1243", data: { marketId: "BTC_INR" } };
+                return engineResult({ ...success("Market deleted"), userId: "1243", data: { marketId: "BTC_INR" } });
             }
             if (subject === EVENT_TO_ENGINE_SUBJECT.HEALTH_CHECK) {
-                return success("Engine healthy");
+                return engineResult(success("Engine healthy"));
             }
 
             throw new Error(`Unexpected subject ${String(subject)} with payload ${JSON.stringify(payload)}`);
@@ -484,17 +641,19 @@ describe("core backend API integration", () => {
             .set("authorization", accessToken())
             .expect(200);
 
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
-            expect.objectContaining({
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
+            payload: expect.objectContaining({
                 userId: "1243",
                 market: expect.objectContaining({ id: "BTC_INR" }),
-            })
-        );
-        expect(mockRequest).toHaveBeenCalledWith(
-            EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
-            { marketId: "BTC_INR" }
-        );
+            }),
+        }));
+        expect(mockBackendRequest).toHaveBeenCalledWith(expect.objectContaining({
+            source: EventSource.BACKEND,
+            type: EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
+            payload: { marketId: "BTC_INR" },
+        }));
     });
 });
 
@@ -562,4 +721,39 @@ function createMarket(id: string) {
         lotSize: 1,
         minNotional: 1,
     };
+}
+
+function directOrder(userId: string, overrides: Record<string, unknown> = {}) {
+    return {
+        ...orderBody(),
+        userId,
+        createdAt: Date.now(),
+        ...overrides,
+    } as never;
+}
+
+type FlowEngine = {
+    process: (subject: unknown, payload?: unknown) => Promise<any>;
+};
+
+function createFlowEngine(): FlowEngine {
+    const modulePath = ["../../../core-trading-engine", "src", "engines", "core-engine"].join("/");
+    const { Engine: FlowEngineConstructor } = require(modulePath) as {
+        Engine: new (snapshotPath: string) => FlowEngine;
+    };
+    return new FlowEngineConstructor(join(tmpdir(), `cex-api-flow-${process.pid}-${Date.now()}.json`));
+}
+
+async function addEngineUser(engine: FlowEngine, userId: string, balances: Record<string, string>) {
+    await engine.process(EVENT_TO_ENGINE_SUBJECT.USER_ADD, { userId });
+    for (const [assetId, amount] of Object.entries(balances)) {
+        await engine.process(EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, assetId, amount });
+    }
+}
+
+async function getApiBalances(app: ReturnType<typeof buildApp>, authorization: string) {
+    const response = await supertest(app).get("/api/v1/user/get-balance")
+        .set("authorization", authorization)
+        .expect(200);
+    return response.body.data.balances as Record<string, { total: string; locked: string }>;
 }

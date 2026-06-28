@@ -1,12 +1,7 @@
-import { NatsManager } from "@workspace/nats-streams";
+// import { NatsManager } from "@workspace/nats-streams";
 import {
     createEmptyTicker,
     EVENT_TO_ENGINE_SUBJECT,
-    GetDepthPayload,
-    GetDepthReturnPayload,
-    GetMarketByIdPayload,
-    GetMarketByIdReturnPayload,
-    GetMarketsReturnPayload,
     MarketId,
     MarketSnapshot,
     normalizeMarketId,
@@ -15,22 +10,28 @@ import {
 } from "@workspace/types";
 import { Request, RequestHandler, Response } from "express";
 import { ApiError, ValidationError } from "../errors/error";
+import { requestEngine } from "../utils/engine-request";
+import { prisma } from "@workspace/database";
 
-const natsPromise = NatsManager.getInstance();
+// const natsPromise = NatsManager.getInstance();
 
 export const getMarketSnapshot: RequestHandler = async (request: Request, response: Response) => {
     const marketId = resolveMarketId(request.params.marketId);
-    const nats = await natsPromise;
-
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const [marketRes, depthRes] = await Promise.all([
+    //     nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
+    //         EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
+    //         { marketId }
+    //     ),
+    //     nats.request<GetDepthReturnPayload, GetDepthPayload>(
+    //         EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
+    //         { marketId }
+    //     ),
+    // ]);
     const [marketRes, depthRes] = await Promise.all([
-        nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
-            EVENT_TO_ENGINE_SUBJECT.MARKET_GET,
-            { marketId }
-        ),
-        nats.request<GetDepthReturnPayload, GetDepthPayload>(
-            EVENT_TO_ENGINE_SUBJECT.DEPTH_GET,
-            { marketId }
-        ),
+        requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_GET, { marketId }),
+        requestEngine(EVENT_TO_ENGINE_SUBJECT.DEPTH_GET, { marketId }),
     ]);
 
     if (!marketRes.success || !marketRes.data) {
@@ -63,11 +64,12 @@ export const getMarketSnapshot: RequestHandler = async (request: Request, respon
 };
 
 export const getMarketTickers: RequestHandler = async (_request: Request, response: Response) => {
-    const nats = await natsPromise;
-
-    const marketsRes = await nats.request<GetMarketsReturnPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL
-    );
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const marketsRes = await nats.request<GetMarketsReturnPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL
+    // );
+    const marketsRes = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
 
     if (!marketsRes.success || !marketsRes.data) {
         throw new ApiError(400, marketsRes.message);
@@ -89,6 +91,48 @@ export const getMarketTickers: RequestHandler = async (_request: Request, respon
         success: true,
         message: "Market tickers fetched",
         data: tickers,
+    });
+};
+
+const TICKER_INTERVALS = new Set(["1m", "15m", "1h", "1w"]);
+
+export const getMarketTickerCandles: RequestHandler = async (request: Request, response: Response) => {
+    const marketId = resolveMarketId(request.params.marketId);
+    const interval = typeof request.query.interval === "string" ? request.query.interval : "1m";
+    const requestedLimit = typeof request.query.limit === "string" ? Number(request.query.limit) : 120;
+
+    if (!TICKER_INTERVALS.has(interval)) {
+        throw new ValidationError("Interval must be one of 1m, 15m, 1h, or 1w");
+    }
+
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 500) {
+        throw new ValidationError("Limit must be an integer between 1 and 500");
+    }
+
+    const records = await prisma.marketTickerCandle.findMany({
+        where: { marketId, interval },
+        orderBy: { bucketStart: "desc" },
+        take: requestedLimit,
+    });
+    const candles = records.reverse().map((candle) => ({
+        marketId: candle.marketId,
+        interval: candle.interval,
+        bucketStart: candle.bucketStart.getTime(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        quoteVolume: candle.quoteVolume,
+        tradeCount: candle.tradeCount,
+        lastTradeId: candle.lastTradeId?.toString(),
+        updatedAt: candle.updatedAt.getTime(),
+    }));
+
+    return response.status(200).json({
+        success: true,
+        message: "Market ticker candles fetched from database",
+        data: { marketId, interval, candles },
     });
 };
 

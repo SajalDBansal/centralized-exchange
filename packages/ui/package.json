@@ -46,6 +46,7 @@
   },
   "exports": {
     "./globals.css": "./src/styles/globals.css",
+    "./debug.css": "./src/styles/debug.css",
     "./postcss.config": "./postcss.config.mjs",
     "./lib/*": "./src/lib/*.ts",
     "./components/*": "./src/components/*.tsx",

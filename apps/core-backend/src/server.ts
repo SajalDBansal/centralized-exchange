@@ -11,7 +11,7 @@ export const createServer = (): Express => {
     .use(morgan("dev"))
     .use(urlencoded({ extended: true }))
     .use(json())
-    .use(cors())
+    .use(cors({ origin: true, credentials: true }))
     .use(cookieParser())
 
   return app;

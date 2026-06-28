@@ -11,14 +11,17 @@ server.use("/api/v1", appRouter);
 
 appRouter.use(errorMiddleware);
 
-backendRouter.startListener()
-  .then(() => {
-    console.log("Backend response listener started");
-  })
-  .catch((err) => {
-    console.error("Failed to start backend response listener:", err);
-  });
+async function main() {
+  // Do not accept HTTP requests until the Redis result listener is ready.
+  await backendRouter.startListener();
+  console.log("Backend Redis response listener started");
 
-server.listen(config.PORT, () => {
-  console.log(`Core Backend Server Running on ${config.PORT}`);
+  server.listen(config.PORT, () => {
+    console.log(`Core Backend Server Running on ${config.PORT}`);
+  });
+}
+
+void main().catch((error) => {
+  console.error("Failed to start core backend:", error);
+  process.exitCode = 1;
 });

@@ -2,11 +2,12 @@ import type { RequestHandler, Request, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
 import { verifyJWTToken } from "../utils/verify-token";
 import { prisma } from "@workspace/database";
-import { NatsManager } from "@workspace/nats-streams";
-import { GetUserBalancesPayload, GetUserBalancesReturnPayload, EVENT_TO_ENGINE_SUBJECT, OnRampPayload, OnRampReturnPayload } from "@workspace/types";
+// import { NatsManager } from "@workspace/nats-streams";
+import { EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 import { OnRampSchema } from "@workspace/validations";
+import { requestEngine } from "../utils/engine-request";
 
-const natsPromise = NatsManager.getInstance();
+// const natsPromise = NatsManager.getInstance();
 
 export const me: RequestHandler = async (request: Request, response: Response) => {
     const accessToken = request.headers["authorization"]?.split(" ")[1];
@@ -28,15 +29,16 @@ export const me: RequestHandler = async (request: Request, response: Response) =
 export const updateProfile: RequestHandler = async (request: Request, response: Response) => { }
 
 export const getBalance: RequestHandler = async (request: Request, response: Response) => {
-    const nats = await natsPromise;
-
     const userId = request.userId;
 
     if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
 
-    const res = await nats.request<GetUserBalancesReturnPayload, GetUserBalancesPayload>(
-        EVENT_TO_ENGINE_SUBJECT.BALANCE_GET, { userId }
-    );
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const res = await nats.request<GetUserBalancesReturnPayload, GetUserBalancesPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.BALANCE_GET, { userId }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.BALANCE_GET, { userId });
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -49,8 +51,6 @@ export const getBalance: RequestHandler = async (request: Request, response: Res
 
 export const addBalance: RequestHandler = async (request: Request, response: Response) => {
     const body = request.body;
-    const nats = await natsPromise;
-
     const userId = request.userId;
 
     if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
@@ -61,16 +61,45 @@ export const addBalance: RequestHandler = async (request: Request, response: Res
 
     const { assetId, amount } = validateData.data;
 
-    const res = await nats.request<OnRampReturnPayload, OnRampPayload>(
-        EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, assetId, amount }
-    );
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const res = await nats.request<OnRampReturnPayload, OnRampPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, assetId, amount }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.ON_RAMP, { userId, assetId, amount });
 
     if (!res.success) throw new ApiError(400, res.message);
 
     return response.status(200).json({
         success: res.success,
         message: res.message,
+        data: res.data,
     });
 }
 
-export const withdrawBalance: RequestHandler = async (request: Request, response: Response) => { }
+export const withdrawBalance: RequestHandler = async (request: Request, response: Response) => {
+    const userId = request.userId;
+
+    if (!userId) throw new AuthenticationError("The userid is not present in the request headers", 403, "USER_ID_NOT_FOUND");
+
+    const validateData = OnRampSchema.safeParse(request.body);
+
+    if (!validateData.success) throw ValidationError.fromZod(validateData.error);
+
+    const { assetId, amount } = validateData.data;
+    // NATS implementation retained for an easy transport rollback:
+    // const nats = await natsPromise;
+    // const res = await nats.request<OffRampReturnPayload, OffRampPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.OFF_RAMP,
+    //     { userId, assetId, amount }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.OFF_RAMP, { userId, assetId, amount });
+
+    if (!res.success || !res.data) throw new ApiError(400, res.message);
+
+    return response.status(200).json({
+        success: true,
+        message: res.message,
+        data: res.data,
+    });
+}

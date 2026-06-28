@@ -99,6 +99,45 @@ describe("core engine system flows", () => {
         });
     });
 
+    it("withdraws available funds without allowing locked order collateral to be removed", async () => {
+        const engine = newEngine();
+        await addUserWithBalances(engine, "buyer", { INR: "100" });
+
+        const resting = await engine.process(EVENT_TO_ENGINE_SUBJECT.ORDER_CREATE, spotOrder({
+            userId: "buyer",
+            side: OrderSide.BUY,
+            entryPrice: "90",
+        }));
+        expect(orderFrom(resting).status).toBe(OrderStatus.OPEN);
+
+        const blocked = await engine.process(EVENT_TO_ENGINE_SUBJECT.OFF_RAMP, {
+            userId: "buyer",
+            assetId: "INR",
+            amount: "10",
+        });
+        expect(blocked.success).toBe(false);
+        expect((blocked as any).code).toBe(EVENT_REJECT_CODES.INSUFFICIENT_BALANCE);
+
+        const withdrawn = await engine.process(EVENT_TO_ENGINE_SUBJECT.OFF_RAMP, {
+            userId: "buyer",
+            assetId: "INR",
+            amount: "9",
+        });
+        expect(withdrawn).toMatchObject({
+            success: true,
+            data: { assetId: "INR", total: "91", locked: "90.01" },
+            updates: {
+                database: {
+                    assetTransactions: [expect.objectContaining({
+                        type: "WITHDRAWAL",
+                        status: "APPLIED",
+                        amount: "9",
+                    })],
+                },
+            },
+        });
+    });
+
     it("enforces FOK and IOC fill boundaries without resting leftover taker quantity", async () => {
         const engine = newEngine();
         await addUserWithBalances(engine, "buyer", { INR: "200000" });

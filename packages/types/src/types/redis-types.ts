@@ -1,4 +1,9 @@
-import type { EngineReturnUpdates, IncomingEventTypes, PayloadToBackendType, PayloadToEngineType } from "./nats-types";
+import type {
+    EngineRequestPayloadBySubject,
+    EngineResponsePayloadBySubject,
+    EngineReturnUpdates,
+    IncomingEventTypes,
+} from "./nats-types";
 
 export const REDIS_STREAMS = {
     MARKET_EVENT: "market:event",
@@ -24,24 +29,36 @@ export enum EventSource {
     BACKEND = "BACKEND"
 }
 
-export interface MarketEvent {
-    requestId: string;
-    backendId: string;
+export type EngineStreamRequest<TSubject extends IncomingEventTypes = IncomingEventTypes> = {
     source: EventSource;
-    type: IncomingEventTypes;
-    payload: PayloadToEngineType;
-    timestamp: number;
-}
+    type: TSubject;
+} & (EngineRequestPayloadBySubject[TSubject] extends undefined
+    ? { payload?: undefined }
+    : { payload: EngineRequestPayloadBySubject[TSubject] });
 
-export interface TradeResultEvent {
+export type MarketEvent<TSubject extends IncomingEventTypes = IncomingEventTypes> = EngineStreamRequest<TSubject> & {
     requestId: string;
     backendId: string;
-    sourceEventType: IncomingEventTypes;
+    timestamp: number;
+};
+
+export type AnyMarketEvent = {
+    [TSubject in IncomingEventTypes]: MarketEvent<TSubject>;
+}[IncomingEventTypes];
+
+export interface TradeResultEvent<TSubject extends IncomingEventTypes = IncomingEventTypes> {
+    requestId: string;
+    backendId: string;
+    sourceEventType: TSubject;
     success: boolean;
-    payload: PayloadToBackendType;
+    payload: EngineResponsePayloadBySubject[TSubject];
     updates?: EngineReturnUpdates;
     timestamp: number;
 }
+
+export type AnyTradeResultEvent = {
+    [TSubject in IncomingEventTypes]: TradeResultEvent<TSubject>;
+}[IncomingEventTypes];
 
 export interface ConsumeOptions<T> {
     stream: string;

@@ -1,17 +1,17 @@
-import { NatsManager } from "@workspace/nats-streams";
+// import { NatsManager } from "@workspace/nats-streams";
 import { Request, RequestHandler, Response } from "express";
 import { ApiError, AuthenticationError, ValidationError } from "../errors/error";
-import { AddMarketAssetPayload, AddMarketPayload, AddMarketReturnPayload, BaseReturnPayloadWithUser, DeleteMarketPayload, DeleteMarketReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsReturnPayload, EVENT_TO_ENGINE_SUBJECT, UpdateMarketPayload, UpdateMarketReturnPayload, GetAssetsReturnPayload } from "@workspace/types";
+import { EVENT_TO_ENGINE_SUBJECT } from "@workspace/types";
 import { AddMarketAssetClientSchema, AddMarketClientSchema, GetMarketByIdClientSchema, UpdateMarketClientSchema } from "@workspace/validations";
-import cuid from "cuid";
+import { requestEngine } from "../utils/engine-request";
 
-const natsPromise = NatsManager.getInstance();
+// const natsPromise = NatsManager.getInstance();
 
 export const getMarkets: RequestHandler = async (request: Request, response: Response) => {
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<GetMarketsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
+    // const nats = await natsPromise;
+    // const res = await nats.request<GetMarketsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL);
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -25,9 +25,9 @@ export const getMarkets: RequestHandler = async (request: Request, response: Res
 
 export const getAssets: RequestHandler = async (request: Request, response: Response) => {
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<GetAssetsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET);
+    // const nats = await natsPromise;
+    // const res = await nats.request<GetAssetsReturnPayload>(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET);
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_GET_ALL_ASSET);
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -48,11 +48,11 @@ export const getMarketById: RequestHandler = async (request: Request, response: 
 
     const { marketId } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_GET, { marketId }
-    );
+    // const nats = await natsPromise;
+    // const res = await nats.request<GetMarketByIdReturnPayload, GetMarketByIdPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_GET, { marketId }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_GET, { marketId });
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -77,12 +77,15 @@ export const addMarket: RequestHandler = async (request: Request, response: Resp
 
     const { market } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<AddMarketReturnPayload, AddMarketPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
-        { userId, market: { ...market, id: `${market.baseAssetId}_${market.quoteAssetId}` } }
-    );
+    // const nats = await natsPromise;
+    // const res = await nats.request<AddMarketReturnPayload, AddMarketPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_ADD,
+    //     { userId, market: { ...market, id: `${market.baseAssetId}_${market.quoteAssetId}` } }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_ADD, {
+        userId,
+        market: { ...market, id: `${market.baseAssetId}_${market.quoteAssetId}` },
+    });
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -109,12 +112,12 @@ export const updateMarket: RequestHandler = async (request: Request, response: R
 
     const { marketId, market } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<UpdateMarketReturnPayload, UpdateMarketPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE,
-        { userId, marketId, market }
-    );
+    // const nats = await natsPromise;
+    // const res = await nats.request<UpdateMarketReturnPayload, UpdateMarketPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE,
+    //     { userId, marketId, market }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_UPDATE, { userId, marketId, market });
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -139,12 +142,12 @@ export const deleteMarket: RequestHandler = async (request: Request, response: R
 
     const { marketId } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<DeleteMarketReturnPayload, DeleteMarketPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE,
-        { userId, marketId }
-    );
+    // const nats = await natsPromise;
+    // const res = await nats.request<DeleteMarketReturnPayload, DeleteMarketPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE,
+    //     { userId, marketId }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_DELETE, { userId, marketId });
 
     if (!res.success || !res.data) throw new ApiError(400, res.message);
 
@@ -169,12 +172,16 @@ export const addAsset: RequestHandler = async (request: Request, response: Respo
 
     const { asset, assetSide } = validateData.data;
 
-    const nats = await natsPromise;
-
-    const res = await nats.request<BaseReturnPayloadWithUser, AddMarketAssetPayload>(
-        EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET,
-        { userId, asset: { ...asset, id: asset.symbol }, assetSide }
-    );
+    // const nats = await natsPromise;
+    // const res = await nats.request<BaseReturnPayloadWithUser, AddMarketAssetPayload>(
+    //     EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET,
+    //     { userId, asset: { ...asset, id: asset.symbol }, assetSide }
+    // );
+    const res = await requestEngine(EVENT_TO_ENGINE_SUBJECT.MARKET_ADD_ASSET, {
+        userId,
+        asset: { ...asset, id: asset.symbol },
+        assetSide,
+    });
 
     if (!res.success) throw new ApiError(400, res.message);
 

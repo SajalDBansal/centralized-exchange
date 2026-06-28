@@ -1,0 +1,330 @@
+{
+  "eventSequenceId": 6423,
+  "balances": [
+    [
+      "cmqxjpv5l0000jqcspsrx48y0",
+      [
+        [
+          "BTC",
+          {
+            "total": "99000",
+            "locked": "0"
+          }
+        ],
+        [
+          "INR",
+          {
+            "total": "100000",
+            "locked": "0"
+          }
+        ],
+        [
+          "USD",
+          {
+            "total": "0",
+            "locked": "0"
+          }
+        ],
+        [
+          "ETH",
+          {
+            "total": "0",
+            "locked": "0"
+          }
+        ],
+        [
+          "SOL",
+          {
+            "total": "0",
+            "locked": "0"
+          }
+        ]
+      ]
+    ]
+  ],
+  "markets": [
+    [
+      "BTC_INR",
+      {
+        "id": "BTC_INR",
+        "name": "BTC_INR",
+        "baseAsset": {
+          "symbol": "BTC",
+          "precision": 2,
+          "id": "BTC"
+        },
+        "quoteAsset": {
+          "symbol": "INR",
+          "precision": 2,
+          "id": "INR"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "BTC_USD",
+      {
+        "id": "BTC_USD",
+        "name": "BTC_USD",
+        "baseAsset": {
+          "symbol": "BTC",
+          "precision": 2,
+          "id": "BTC"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "BTC_PERP",
+      {
+        "id": "BTC_PERP",
+        "name": "BTC_PERP",
+        "baseAsset": {
+          "symbol": "BTC",
+          "precision": 2,
+          "id": "BTC"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "ETH_INR",
+      {
+        "id": "ETH_INR",
+        "name": "ETH_INR",
+        "baseAsset": {
+          "symbol": "ETH",
+          "precision": 2,
+          "id": "ETH"
+        },
+        "quoteAsset": {
+          "symbol": "INR",
+          "precision": 2,
+          "id": "INR"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "ETH_USD",
+      {
+        "id": "ETH_USD",
+        "name": "ETH_USD",
+        "baseAsset": {
+          "symbol": "ETH",
+          "precision": 2,
+          "id": "ETH"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "ETH_PERP",
+      {
+        "id": "ETH_PERP",
+        "name": "ETH_PERP",
+        "baseAsset": {
+          "symbol": "ETH",
+          "precision": 2,
+          "id": "ETH"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "SOL_INR",
+      {
+        "id": "SOL_INR",
+        "name": "SOL_INR",
+        "baseAsset": {
+          "symbol": "SOL",
+          "precision": 2,
+          "id": "SOL"
+        },
+        "quoteAsset": {
+          "symbol": "INR",
+          "precision": 2,
+          "id": "INR"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "SOL_USD",
+      {
+        "id": "SOL_USD",
+        "name": "SOL_USD",
+        "baseAsset": {
+          "symbol": "SOL",
+          "precision": 2,
+          "id": "SOL"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ],
+    [
+      "SOL_PERP",
+      {
+        "id": "SOL_PERP",
+        "name": "SOL_PERP",
+        "baseAsset": {
+          "symbol": "SOL",
+          "precision": 2,
+          "id": "SOL"
+        },
+        "quoteAsset": {
+          "symbol": "USD",
+          "precision": 2,
+          "id": "USD"
+        },
+        "maxLeverage": 50,
+        "minQty": 1,
+        "tickSize": 1,
+        "lotSize": 1,
+        "minNotional": 1
+      }
+    ]
+  ],
+  "positions": [
+    [
+      "BTC_INR",
+      []
+    ],
+    [
+      "BTC_USD",
+      []
+    ],
+    [
+      "BTC_PERP",
+      []
+    ],
+    [
+      "ETH_INR",
+      []
+    ],
+    [
+      "ETH_USD",
+      []
+    ],
+    [
+      "ETH_PERP",
+      []
+    ],
+    [
+      "SOL_INR",
+      []
+    ],
+    [
+      "SOL_USD",
+      []
+    ],
+    [
+      "SOL_PERP",
+      []
+    ]
+  ],
+  "orders": [],
+  "assets": [
+    [
+      "BTC",
+      {
+        "symbol": "BTC",
+        "precision": 2,
+        "id": "BTC"
+      }
+    ],
+    [
+      "ETH",
+      {
+        "symbol": "ETH",
+        "precision": 2,
+        "id": "ETH"
+      }
+    ],
+    [
+      "SOL",
+      {
+        "symbol": "SOL",
+        "precision": 2,
+        "id": "SOL"
+      }
+    ],
+    [
+      "INR",
+      {
+        "symbol": "INR",
+        "precision": 2,
+        "id": "INR"
+      }
+    ],
+    [
+      "USD",
+      {
+        "symbol": "USD",
+        "precision": 2,
+        "id": "USD"
+      }
+    ]
+  ],
+  "marketRisk": [],
+  "insuranceFunds": [],
+  "commissionFunds": [],
+  "fundingPayments": []
+}

@@ -1,4 +1,4 @@
-import { AddMarketAssetPayload, AddMarketPayload, AddUserPayload, Asset, BalancesType, BaseReturnPayload, BaseReturnPayloadWithUser, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, EngineSnapshot, EVENT_TO_ENGINE_SUBJECT, FundingPayments, FundingSettlePayload, FundingSettleReturnPayload, GetAssetsReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, IncomingEventTypes, IndexPriceUpdatePayload, IndexPriceUpdateReturnPayload, InMarketFillType, InMarketOrderType, Market, MarketFunds, MarketId, MarketRiskStates, MarketsType, MarketType, OnRampPayload, OnRampReturnPayload, OrderId, OrderPosition, OrderSide, OrderStatus, OrderType, PayloadToBackendType, PayloadToEngineType, STPMode, TimeInForce, UpdateMarketPayload, UpdateMarketReturnPayload, UserPositionType } from "@workspace/types";
+import { AddMarketAssetPayload, AddMarketPayload, AddUserPayload, Asset, BalancesType, BaseReturnPayload, BaseReturnPayloadWithUser, CancelOrderPayload, CancelOrderReturnPayload, CreateOrderPayload, CreateOrderReturnPayload, DeleteMarketPayload, DeleteMarketReturnPayload, EngineSnapshot, EVENT_TO_ENGINE_SUBJECT, FundingPayments, FundingSettlePayload, FundingSettleReturnPayload, GetAssetsReturnPayload, GetDepthPayload, GetDepthReturnPayload, GetMarketByIdPayload, GetMarketByIdReturnPayload, GetMarketsReturnPayload, GetOrderByIdPayload, GetOrderByIdReturnPayload, GetUserBalancesPayload, GetUserBalancesReturnPayload, GetUserOpenOrdersPayload, GetUserOpenOrdersReturnPayload, IncomingEventTypes, IndexPriceUpdatePayload, IndexPriceUpdateReturnPayload, InMarketFillType, InMarketOrderType, Market, MarketFunds, MarketId, MarketRiskStates, MarketsType, MarketType, OffRampPayload, OffRampReturnPayload, OnRampPayload, OnRampReturnPayload, OrderId, OrderPosition, OrderSide, OrderStatus, OrderType, PayloadToBackendType, PayloadToEngineType, STPMode, TimeInForce, UpdateMarketPayload, UpdateMarketReturnPayload, UserPositionType } from "@workspace/types";
 import { OMSEngine } from "./oms-engine";
 import { BalanceEngine } from "./balance-engine";
 import { RejectError } from "../utils/error";
@@ -123,6 +123,10 @@ export class Engine {
 
                 case EVENT_TO_ENGINE_SUBJECT.ON_RAMP:
                     result = this.onRamp(data as OnRampPayload);
+                    break;
+
+                case EVENT_TO_ENGINE_SUBJECT.OFF_RAMP:
+                    result = this.offRamp(data as OffRampPayload);
                     break;
 
                 case EVENT_TO_ENGINE_SUBJECT.DEPTH_GET:
@@ -396,6 +400,38 @@ export class Engine {
             console.error(error);
 
             return this.internalError("Onramp failed") as OnRampReturnPayload;
+        }
+    }
+
+    private offRamp = (payload: OffRampPayload): OffRampReturnPayload => {
+        try {
+            const parsed = this.omsChecker.UserBalanceCheck(payload);
+            const balances = this.balanceEngine.removeBalance(parsed);
+            const result: OffRampReturnPayload = {
+                success: true,
+                userId: payload.userId,
+                eventId: this.getUpdatedEventId(),
+                timestamp: Date.now(),
+                message: "Balance withdrawn successfully",
+                data: { ...balances },
+            };
+
+            this.databaseManager.captureOffRamp(payload, result);
+            return result;
+        } catch (error) {
+            if (error instanceof RejectError) {
+                return {
+                    success: false,
+                    userId: payload.userId,
+                    eventId: this.getUpdatedEventId(),
+                    timestamp: Date.now(),
+                    message: error.message,
+                    code: error.code,
+                };
+            }
+
+            console.error(error);
+            return this.internalError("Withdrawal failed") as OffRampReturnPayload;
         }
     }
 
