@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
     AssetTransactionStatus as PrismaAssetTransactionStatus,
     AssetTransactionType as PrismaAssetTransactionType,

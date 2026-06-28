@@ -12,7 +12,8 @@
   "dependencies": {
     "@workspace/redis-streams": "workspace:*",
     "@workspace/types": "workspace:*",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@workspace/database": "workspace:*",
