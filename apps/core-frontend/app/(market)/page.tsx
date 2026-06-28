@@ -17,6 +17,8 @@ export const metadata = createPageMetadata({
   keywords: ["crypto trading platform", "spot crypto trading", "perpetual futures exchange"],
 });
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const tickers = await getTickers();
 
